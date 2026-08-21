@@ -1,0 +1,195 @@
+# Default values for the zbs chart.
+# Two applications are deployed: "api" (back end, internal) and "ui"
+# (front end nginx, public entry point). Non-secret runtime configuration
+# lands in a ConfigMap consumed by the API pod; credentials in a Secret.
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Shared pod scheduling (applies to both api and ui deployments).
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+service:
+  api:
+    type: ClusterIP
+    port: 80
+  ui:
+    type: ClusterIP
+    port: 80
+
+route:
+  # OpenShift Route to the UI service - the public entry point (and the
+  # natural place for router-level authentication annotations).
+  enabled: false
+  # Empty host -> OpenShift assigns <route-name>.<cluster-domain>.
+  host: ""
+  path: ""
+  annotations: {}
+  tls:
+    enabled: false
+    # edge | passthrough | reencrypt
+    termination: edge
+    # None | Allow | Redirect (edge/reencrypt only)
+    insecureEdgeTerminationPolicy: Redirect
+    # Optional PEM material for edge/reencrypt termination:
+    certificate: ""
+    key: ""
+    caCertificate: ""
+    destinationCACertificate: ""
+
+# ---------------------------------------------------------------------------
+# Application configuration -> ConfigMap (consumed by the API container)
+# ---------------------------------------------------------------------------
+config:
+  listenPort: "8080"
+
+  # Log verbosity: DEBUG | INFO | WARNING | ERROR | CRITICAL
+  logLevel: "INFO"
+
+  # Comma-separated host:port list of the ZooKeeper ensemble client ports,
+  # e.g. "zk-0.zk-headless.zk.svc.cluster.local:2181,zk-1.zk-headless.zk.svc.cluster.local:2181".
+  zkHosts: "zookeeper.zookeeper.svc.cluster.local:2181"
+
+  # Subtree to back up / restore. "/" backs up everything except /zookeeper.
+  zkRoot: "/"
+  zkSessionTimeout: "15"
+
+  # Seconds between automatic backups. "0" disables the scheduler.
+  # Durations accept plain seconds or units: "45s", "5m", "2h", "1d".
+  backupIntervalSeconds: "3600"
+
+  # Retention: delete backups in S3 older than retentionMaxAge.
+  # Accepts "24h" (one day), "7d"/"1w" (one week), "30d" and so on, or plain
+  # seconds. Empty/"0" disables deletion entirely (default - opt in!).
+  retentionMaxAge: ""
+  # How often the retention sweeper checks for expired backups.
+  retentionInterval: "6h"
+  # Never delete the newest N backups, even if they are older than maxAge.
+  retentionMinKeep: "1"
+
+  # Replay stored ACLs on restore (requires sufficient ZK permissions).
+  restoreAcls: "false"
+
+  s3Bucket: ""
+  s3Region: "us-east-1"
+  s3Prefix: "zbs/"
+  # Empty = real AWS S3. For MinIO e.g. "http://minio.minio.svc.cluster.local:9000".
+  s3Endpoint: ""
+
+# ---------------------------------------------------------------------------
+# Credentials -> Secret (set existingSecret to manage the Secret yourself)
+# ---------------------------------------------------------------------------
+secret:
+  existingSecret: ""
+  zkUsername: ""
+  zkPassword: ""
+  s3AccessKeyId: ""
+  s3SecretAccessKey: ""
+
+# ---------------------------------------------------------------------------
+# Back end (API)
+# ---------------------------------------------------------------------------
+api:
+  image:
+    repository: ghcr.io/example/zbs-api
+    pullPolicy: IfNotPresent
+    # Overrides the image tag, whose default is "v{{ .Chart.AppVersion }}".
+    tag: ""
+
+  podAnnotations: {}
+
+  podSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Front end (UI) - nginx serving the SPA and proxying /api to the API service
+# ---------------------------------------------------------------------------
+ui:
+  image:
+    repository: ghcr.io/example/zbs-ui
+    pullPolicy: IfNotPresent
+    # Overrides the image tag, whose default is "v{{ .Chart.AppVersion }}".
+    tag: ""
+
+  # Stateless - safe to scale out.
+  replicaCount: 1
+
+  # Port nginx listens on inside the container.
+  containerPort: "8080"
+
+  # Port the UI Service forwards to. Keep it equal to containerPort by
+  # default; if you add an auth-proxy sidecar that should receive traffic
+  # first (and forward to nginx afterwards), set this to its port instead,
+  # e.g. "4180" for oauth2-proxy.
+  targetPort: "8080"
+
+  # Where nginx proxies /api. Empty = this release's API Service
+  # (http://<release>-zbs-api.<namespace>.svc.cluster.local:<listenPort>).
+  apiUpstream: ""
+
+  # Extra containers appended to the UI pod - e.g. your auth proxy
+  # (oauth2-proxy, tinyauth, ...) forwarding to localhost:<containerPort>.
+  sidecars: []
+  # Example:
+  # sidecars:
+  #   - name: auth-proxy
+  #     image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+  #     args: ["--upstream=http://127.0.0.1:8080", "--http-address=0.0.0.0:4180"]
+  #     ports:
+  #       - name: proxy
+  #         containerPort: 4180
+
+  # Volumes referenced by sidecars (configs, cookie secrets, ...).
+  extraVolumes: []
+  # Example:
+  # extraVolumes:
+  #   - name: proxy-config
+  #     configMap: {name: my-oauth2-proxy}
+
+  podAnnotations: {}
+
+  podSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi

@@ -1,0 +1,45 @@
+{{- if .Values.route.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "zbs.ui.fullname" . }}
+  labels:
+    {{- include "zbs.labels" (dict "ctx" . "component" "ui") | nindent 4 }}
+  {{- with .Values.route.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.route.host }}
+  host: {{ . }}
+  {{- end }}
+  {{- with .Values.route.path }}
+  path: {{ . }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "zbs.ui.fullname" . }}
+    weight: 100
+  port:
+    targetPort: http
+  {{- if .Values.route.tls.enabled }}
+  tls:
+    termination: {{ .Values.route.tls.termination }}
+    {{- with .Values.route.tls.insecureEdgeTerminationPolicy }}
+    insecureEdgeTerminationPolicy: {{ . }}
+    {{- end }}
+    {{- with .Values.route.tls.certificate }}
+    certificate: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.route.tls.key }}
+    key: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.route.tls.caCertificate }}
+    caCertificate: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.route.tls.destinationCACertificate }}
+    destinationCACertificate: {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  wildcardPolicy: None
+{{- end }}

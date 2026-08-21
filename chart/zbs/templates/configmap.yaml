@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "zbs.fullname" . }}
+  labels:
+    {{- include "zbs.labels" (dict "ctx" .) | nindent 4 }}
+data:
+  ZBS_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  ZBS_LISTEN_PORT: {{ .Values.config.listenPort | quote }}
+  ZBS_ZK_HOSTS: {{ .Values.config.zkHosts | quote }}
+  ZBS_ZK_ROOT: {{ .Values.config.zkRoot | quote }}
+  ZBS_ZK_SESSION_TIMEOUT: {{ .Values.config.zkSessionTimeout | quote }}
+  ZBS_BACKUP_INTERVAL_SECONDS: {{ .Values.config.backupIntervalSeconds | quote }}
+  ZBS_RETENTION_MAX_AGE: {{ .Values.config.retentionMaxAge | quote }}
+  ZBS_RETENTION_INTERVAL: {{ .Values.config.retentionInterval | quote }}
+  ZBS_RETENTION_MIN_KEEP: {{ .Values.config.retentionMinKeep | quote }}
+  ZBS_RESTORE_ACLS: {{ .Values.config.restoreAcls | quote }}
+  ZBS_S3_BUCKET: {{ .Values.config.s3Bucket | quote }}
+  ZBS_S3_REGION: {{ .Values.config.s3Region | quote }}
+  ZBS_S3_PREFIX: {{ .Values.config.s3Prefix | quote }}
+  ZBS_S3_ENDPOINT: {{ .Values.config.s3Endpoint | quote }}

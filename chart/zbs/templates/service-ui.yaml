@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "zbs.ui.fullname" . }}
+  labels:
+    {{- include "zbs.labels" (dict "ctx" . "component" "ui") | nindent 4 }}
+spec:
+  # Public entry point for browsers (and your auth proxy). By default traffic
+  # lands on nginx; if you add an auth-proxy sidecar that should terminate
+  # requests first, point targetPort at its port instead.
+  type: {{ .Values.service.ui.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.ui.port }}
+      targetPort: {{ .Values.ui.targetPort }}
+      protocol: TCP
+  selector:
+    {{- include "zbs.selectorLabels" (dict "ctx" . "component" "ui") | nindent 4 }}

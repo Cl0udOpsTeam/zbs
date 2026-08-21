@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "zbs.ui.fullname" . }}
+  labels:
+    {{- include "zbs.labels" (dict "ctx" . "component" "ui") | nindent 4 }}
+spec:
+  # The UI is stateless and safe to scale; this is also the pod where an
+  # auth proxy sidecar (ui.sidecars) would live.
+  replicas: {{ .Values.ui.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "zbs.selectorLabels" (dict "ctx" . "component" "ui") | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.ui.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "zbs.selectorLabels" (dict "ctx" . "component" "ui") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "zbs.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.ui.podSecurityContext | nindent 8 }}
+      containers:
+        - name: ui
+          image: "{{ .Values.ui.image.repository }}:{{ .Values.ui.image.tag | default (printf "v%s" .Chart.AppVersion) }}"
+          imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.ui.containerPort }}
+              protocol: TCP
+          env:
+            - name: ZBS_UI_PORT
+              value: {{ .Values.ui.containerPort | quote }}
+            - name: ZBS_API_UPSTREAM
+              value: {{ include "zbs.ui.apiUpstream" . | quote }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.ui.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.ui.containerSecurityContext | nindent 12 }}
+        {{- with .Values.ui.sidecars }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.ui.extraVolumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

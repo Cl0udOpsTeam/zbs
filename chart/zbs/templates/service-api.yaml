@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "zbs.api.fullname" . }}
+  labels:
+    {{- include "zbs.labels" (dict "ctx" . "component" "api") | nindent 4 }}
+spec:
+  # Internal only. The UI's nginx proxies /api here; browsers never need to
+  # reach this Service directly, which keeps the API out of your auth proxy
+  # perimeter unless you choose otherwise.
+  type: {{ .Values.service.api.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.api.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "zbs.selectorLabels" (dict "ctx" . "component" "api") | nindent 4 }}

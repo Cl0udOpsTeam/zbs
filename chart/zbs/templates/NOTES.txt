@@ -1,0 +1,32 @@
+ZBS has been deployed in namespace "{{ .Release.Namespace }}".
+
+Components:
+  back end (internal): svc/{{ include "zbs.api.fullname" . }}  - ZooKeeper/S3 API, ClusterIP only
+  front end (public):  svc/{{ include "zbs.ui.fullname" . }}  - nginx serving the UI, proxies /api
+
+Configuration (ConfigMap):
+  ZooKeeper:  {{ .Values.config.zkHosts }} (root {{ .Values.config.zkRoot }})
+  S3 bucket:  {{ .Values.config.s3Bucket }} (prefix {{ .Values.config.s3Prefix }})
+  Schedule:   every {{ .Values.config.backupIntervalSeconds }}s (0 = disabled)
+{{- if not .Values.secret.existingSecret }}
+
+NOTE: credentials are currently empty placeholders. Set them with:
+
+  helm upgrade {{ .Release.Name }} {{ .Chart.Name }} --reuse-values \
+    --set secret.s3AccessKeyId=YOUR_KEY \
+    --set secret.s3SecretAccessKey=YOUR_SECRET
+{{- end }}
+
+Protect the UI with your own auth proxy:
+  * sidecar: set ui.sidecars + ui.targetPort (see chart values / README), or
+  * route: add your router's auth annotations under route.annotations.
+
+Expose the UI:
+
+{{- if .Values.route.enabled }}
+  Route: {{ include "zbs.ui.fullname" . }}{{ if .Values.route.host }} -> {{ .Values.route.host }}{{ end }}
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "zbs.ui.fullname" . }} 8080:{{ .Values.service.ui.port }}
+
+then open http://localhost:8080
+{{- end }}

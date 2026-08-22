@@ -57,7 +57,7 @@ class TestSweepOnce:
                 "body": b"x",
                 "last_modified": datetime.fromisoformat(modified),
             }
-        monkeypatch.setattr(retention.s3, "list_backups", lambda: [
+        monkeypatch.setattr(retention.s3, "list_backups", lambda folder=None: [
             {
                 "key": key,
                 "size": len(meta["body"]),
@@ -100,7 +100,7 @@ class TestSweepOnce:
     def test_s3_failure_propagates_to_loop_guard(self, monkeypatch):
         retention.settings.retention_max_age_seconds = 86400
 
-        def boom():
+        def boom(folder=None):
             raise errors.S3UnavailableError("endpoint down")
 
         monkeypatch.setattr(retention.s3, "list_backups", boom)

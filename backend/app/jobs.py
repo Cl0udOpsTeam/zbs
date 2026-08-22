@@ -129,6 +129,7 @@ def perform_backup(connect=None) -> dict:
     key = s3.upload_backup(payload)
     return {
         "key": key,
+        "folder": settings.backup_target_folder,
         "bytes": len(payload),
         "nodes": zk.count_nodes(document["tree"]),
         "root": settings.zk_root,
@@ -141,7 +142,11 @@ def run_backup_now(trigger: str = "manual") -> dict:
         result["trigger"] = trigger
         return result
 
-    return submit("backup", f"Backup {settings.zk_root} ({trigger})", fn)
+    return submit(
+        "backup",
+        f"Backup {settings.zk_root} -> {settings.backup_target_folder}/ ({trigger})",
+        fn,
+    )
 
 
 def perform_restore(key: str, wipe: bool = False, connect=None) -> dict:

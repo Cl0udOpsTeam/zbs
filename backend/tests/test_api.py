@@ -50,6 +50,7 @@ class TestConfigEndpoint:
             "max_age_seconds": 604800,
             "interval_seconds": 21600,
             "min_keep": retention.settings.retention_min_keep,
+            "scope_folders": retention.settings.retention_scope(),
         }
 
 
@@ -83,13 +84,13 @@ class TestBackupsEndpoint:
         monkeypatch.setattr(
             s3_module,
             "list_backups",
-            lambda: [{"key": "zbs/x.json.gz", "size": 5, "last_modified": "2024-05-01T00:00:00+00:00"}],
+            lambda folder=None: [{"key": "zbs/x.json.gz", "size": 5, "last_modified": "2024-05-01T00:00:00+00:00"}],
         )
         body = client.get("/api/backups").json()
         assert body["backups"][0]["key"] == "zbs/x.json.gz"
 
     def test_configuration_error_maps_to_400(self, client, monkeypatch):
-        def boom():
+        def boom(folder=None):
             raise errors.ConfigurationError("ZBS_S3_BUCKET is not configured")
 
         monkeypatch.setattr(s3_module, "list_backups", boom)
@@ -98,7 +99,7 @@ class TestBackupsEndpoint:
         assert "ZBS_S3_BUCKET" in response.json()["detail"]
 
     def test_unavailable_maps_to_502(self, client, monkeypatch):
-        def boom():
+        def boom(folder=None):
             raise errors.S3UnavailableError("endpoint unreachable")
 
         monkeypatch.setattr(s3_module, "list_backups", boom)
@@ -107,7 +108,7 @@ class TestBackupsEndpoint:
         assert "S3 list failed" in response.json()["detail"]
 
     def test_unexpected_error_maps_to_500(self, monkeypatch):
-        def boom():
+        def boom(folder=None):
             raise ZeroDivisionError("bug")
 
         monkeypatch.setattr(s3_module, "list_backups", boom)

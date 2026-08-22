@@ -12,14 +12,53 @@ afterEach(() => {
 });
 
 describe("api client", () => {
-  it("parses successful JSON and unwraps list payloads", async () => {
+  it("parses successful JSON and returns folder-scoped backup lists", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({
+        backups: [{ key: "dev-test-my-zookeeper/k.json.gz", size: 1, last_modified: "z" }],
+        folder: "dev-test-my-zookeeper",
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await api.listBackups("dev-test-my-zookeeper");
+    expect(result.backups[0].key).toContain("dev-test-my-zookeeper");
+    expect(result.folder).toBe("dev-test-my-zookeeper");
+    const [path] = fetchMock.mock.calls[0];
+    expect(String(path)).toBe("/api/backups?folder=dev-test-my-zookeeper");
+  });
+
+  it("requests the default scope when no folder is given", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({ backups: [], folder: "zbs" })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await api.listBackups();
+    const [path] = fetchMock.mock.calls[0];
+    expect(String(path)).toBe("/api/backups");
+  });
+
+  it("unwraps cluster discovery payloads", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse({ backups: [{ key: "k", size: 1, last_modified: "z" }] }))
+      vi.fn(async () =>
+        jsonResponse({
+          clusters: [
+            {
+              name: "dev-test-my-zookeeper",
+              environment: "dev",
+              namespace: "test",
+              zkName: "my-zookeeper",
+              isBackupTarget: true,
+            },
+            { name: "zbs", environment: null, namespace: null, zkName: null, isBackupTarget: false },
+          ],
+        })
+      )
     );
-    await expect(api.listBackups()).resolves.toEqual([
-      { key: "k", size: 1, last_modified: "z" },
-    ]);
+    const clusters = await api.getClusters();
+    expect(clusters).toHaveLength(2);
+    expect(clusters[0].zkName).toBe("my-zookeeper");
+    expect(clusters[0].isBackupTarget).toBe(true);
   });
 
   it("sends JSON content type and body on restore", async () => {

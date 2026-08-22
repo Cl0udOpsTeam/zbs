@@ -8,6 +8,8 @@ import logging
 import os
 import re
 
+from . import errors
+
 log = logging.getLogger("zbs.config")
 
 _UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
@@ -128,6 +130,29 @@ class Settings:
             log.warning("ZBS_S3_PREFIX=%r lacks trailing '/'; appending it", prefix)
             prefix += "/"
         self.s3_prefix = prefix
+
+        # Multi-cluster folders: keys live under "<folder>/<artifact>" where
+        # the folder is conventionally ENVIRONMENT-NAMESPACE-ZOOKEEPER_NAME.
+        # - s3_folders: explicit allow-list; empty = auto-discover at bucket root
+        # - cluster_folder: where THIS instance uploads its own backups;
+        #   empty = legacy mode (uploads go to s3_prefix, e.g. zbs/)
+        self.s3_folders = self._parse_folder_list(_env("ZBS_S3_FOLDERS", ""), "ZBS_S3_FOLDERS")
+        self.cluster_folder = self._validate_folder_name(
+            _env("ZBS_CLUSTER_FOLDER", "") or None, "ZBS_CLUSTER_FOLDER"
+        )
+        if (
+            self.cluster_folder
+            and self.s3_folders
+            and self.cluster_folder not in self.s3_folders
+        ):
+            raise errors.ConfigurationError(
+                f"ZBS_CLUSTER_FOLDER {self.cluster_folder!r} must be listed in ZBS_S3_FOLDERS"
+            )
+
+        self.retention_folders = self._parse_folder_list(
+            _env("ZBS_RETENTION_FOLDERS", ""), "ZBS_RETENTION_FOLDERS"
+        )
+
         self.s3_access_key_id = os.environ.get("ZBS_S3_ACCESS_KEY_ID") or None
         self.s3_secret_access_key = os.environ.get("ZBS_S3_SECRET_ACCESS_KEY") or None
 
@@ -144,6 +169,49 @@ class Settings:
     @property
     def zk_auth_enabled(self) -> bool:
         return bool(self.zk_username and self.zk_password)
+
+    # ---- multi-folder helpers -------------------------------------------------
+
+    _FOLDER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
+
+    @classmethod
+    def _validate_folder_name(cls, name: str | None, label: str) -> str | None:
+        """Folder names become S3 key prefixes; keep them strictly safe."""
+        if not name:
+            return None
+        if not cls._FOLDER_NAME_RE.match(name) or ".." in name:
+            raise errors.ConfigurationError(
+                f"{label}={name!r} is not a valid folder name "
+                "(allowed: letters, digits, '.', '_', '-', no '..')"
+            )
+        return name
+
+    @classmethod
+    def _parse_folder_list(cls, raw: str, label: str) -> list[str]:
+        folders = []
+        for part in raw.split(","):
+            name = cls._validate_folder_name(part.strip(), label)
+            if name and name not in folders:
+                folders.append(name)
+        return folders
+
+    @property
+    def backup_target_folder(self) -> str:
+        """Folder new backups are written to (legacy mode -> old prefix stem)."""
+        return self.cluster_folder or self.s3_prefix.rstrip("/")
+
+    def retention_scope(self) -> list[str]:
+        """Folders the retention sweeper is allowed to clean up.
+
+        SAFETY RULE: multiple deployments commonly share one bucket while
+        managing different ZooKeepers. Browsing another cluster's backups must
+        never grant the right to DELETE them, so the default scope is strictly
+        THIS instance's own backup-target folder. Widening is always an
+        explicit, deliberate act via ZBS_RETENTION_FOLDERS.
+        """
+        if self.retention_folders:
+            return list(self.retention_folders)
+        return [self.backup_target_folder]
 
     def describe(self) -> dict[str, str]:
         """Non-secret effective settings, safe for the startup banner."""
@@ -162,6 +230,9 @@ class Settings:
             "s3 endpoint": self.s3_endpoint or "AWS S3",
             "s3 bucket": self.s3_bucket or "(not configured)",
             "s3 prefix": self.s3_prefix,
+            "backup target folder": self.backup_target_folder,
+            "known folders": ", ".join(self.s3_folders) if self.s3_folders else "(auto-discovered)",
+            "retention scope": ", ".join(self.retention_scope()),
             "restore acls": str(self.restore_acls),
             "restore limits": f"max depth {self.restore_max_depth}, max nodes {'unlimited' if not self.restore_max_nodes else self.restore_max_nodes}",
         }

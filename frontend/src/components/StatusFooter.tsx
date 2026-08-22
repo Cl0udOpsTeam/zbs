@@ -19,6 +19,12 @@ export function StatusFooter({ status }: { status: StatusResponse | null }) {
     parts.push(
       `retention: keep ${humanizeSeconds(retention.max_age_seconds)}, sweep ${fmtInterval(retention.interval_seconds)}`
     );
+    // Always disclose exactly which folders this deployment may delete from -
+    // with shared buckets, other clusters' folders must never be touched.
+    const scope = retention.scope_folders ?? [];
+    if (scope.length > 0) {
+      parts.push(`retention scope: ${scope.join(", ")}`);
+    }
     const lastRun = retention.last_run as { at?: string; deleted?: number } | null;
     if (lastRun?.at) {
       parts.push(`last swept ${fmtWhen(lastRun.at)} UTC (${lastRun.deleted ?? 0} deleted)`);

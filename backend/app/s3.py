@@ -1,11 +1,23 @@
 """S3 storage backend for backup artifacts (AWS S3 or S3-compatible endpoints).
 
+Multi-folder layout: each ZooKeeper cluster's backups live under a top-level
+"folder" prefix, conventionally named ENVIRONMENT-NAMESPACE-ZOOKEEPER_NAME
+(e.g. ``dev-test-my-zookeeper``), producing keys like::
+
+    dev-test-my-zookeeper/zbs-20240501T120000Z.json.gz
+
+Folders are auto-discovered via delimiter listings at the bucket root and can
+be constrained with ZBS_S3_FOLDERS. This instance uploads to its own cluster
+folder (ZBS_CLUSTER_FOLDER); legacy deployments without it keep writing to the
+old ZBS_S3_PREFIX (default zbs/) which simply shows up as one more folder.
+
 Every boto call is translated into the ZBS error taxonomy so callers can
 distinguish "endpoint unreachable" from "bad credentials" from "no such
 backup", and every operation is logged at a level that tells the story.
 """
 
 import logging
+import re
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -26,6 +38,10 @@ from .config import settings
 log = logging.getLogger("zbs.s3")
 
 _client = None
+
+# Any single-segment prefix is acceptable when folders are auto-discovered;
+# explicit configuration narrows this further.
+_LOOSE_FOLDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
 
 
 def client():
@@ -91,15 +107,102 @@ def _translate(operation: str):
         raise errors.S3UnavailableError(f"S3 client error during {operation}: {exc}") from exc
 
 
+# --------------------------------------------------------------------------
+# folders
+# --------------------------------------------------------------------------
+
+def parse_folder_name(name: str) -> dict | None:
+    """Split ENVIRONMENT-NAMESPACE-ZOOKEEPER_NAME into parts (None if not matching)."""
+    parts = name.split("-", 2)
+    if len(parts) < 3 or not all(parts):
+        return None
+    return {"environment": parts[0], "namespace": parts[1], "zkName": parts[2]}
+
+
+def discover_folders() -> list[dict]:
+    """List cluster folders at the bucket root.
+
+    Returns one entry per folder: name, parsed env/ns/zk parts, and whether it
+    is this instance's backup target. Explicit ZBS_S3_FOLDERS always appear
+    (even when still empty in S3); with no allow-list, everything discovered
+    at the root is shown - including legacy prefixes like `zbs`.
+    """
+    discovered: set[str] = set()
+    with _translate("folder discovery"):
+        paginator = client().get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=settings.s3_bucket, Delimiter="/"):
+            for prefix_entry in page.get("CommonPrefixes", []):
+                name = (prefix_entry.get("Prefix") or "").rstrip("/")
+                if name and settings._FOLDER_NAME_RE.match(name) and ".." not in name:
+                    discovered.add(name)
+
+    known = set(settings.s3_folders) | ({settings.cluster_folder} if settings.cluster_folder else set())
+    merged = sorted(discovered | known)
+    target = settings.backup_target_folder
+    folders = []
+    for name in merged:
+        info = parse_folder_name(name) or {}
+        folders.append(
+            {
+                "name": name,
+                "environment": info.get("environment"),
+                "namespace": info.get("namespace"),
+                "zkName": info.get("zkName"),
+                "isBackupTarget": name == target,
+            }
+        )
+    log.debug(
+        "folder discovery: %d folder(s) (%d discovered, %d configured)",
+        len(folders),
+        len(discovered),
+        len(settings.s3_folders),
+    )
+    return folders
+
+
+def validate_folder(folder: str) -> None:
+    """Reject malformed/unknown folder query parameters early."""
+    if not folder or ".." in folder or not _LOOSE_FOLDER_RE.match(folder):
+        raise ValueError(f"invalid folder name: {folder!r}")
+
+
+def folder_prefix(folder: str | None = None) -> str:
+    """Effective key prefix for a folder (defaults to the backup target)."""
+    return f"{folder or settings.backup_target_folder}/"
+
+
+def _allowed_prefixes() -> list[str]:
+    """Static prefixes a restore key may live under (sync, no network)."""
+    prefixes = [f"{name}/" for name in settings.s3_folders]
+    prefixes.append(f"{settings.backup_target_folder}/")
+    prefixes.append(settings.s3_prefix)
+    return sorted(set(prefixes))
+
+
+# --------------------------------------------------------------------------
+# keys & objects
+# --------------------------------------------------------------------------
+
 def validate_key(key: str) -> None:
-    """Refuse keys outside the configured prefix (defense against misuse)."""
-    if not key or not key.startswith(settings.s3_prefix):
-        raise ValueError(f"backup key must live under prefix {settings.s3_prefix!r}")
+    """Refuse keys outside any managed folder/prefix (defense against misuse)."""
+    if not key:
+        raise ValueError("backup key must not be empty")
+    if not key.endswith(".json.gz") or key.endswith("/"):
+        raise ValueError(f"key {key!r} is not a ZBS backup artifact")
+    allowed = _allowed_prefixes()
+    # When folders are auto-discovered (no allow-list), accept well-formed
+    # single-segment prefixes so newly dropped-in clusters are usable.
+    if not settings.s3_folders:
+        first, sep, _rest = key.partition("/")
+        if sep and _LOOSE_FOLDER_RE.match(first):
+            return
+    if not any(key.startswith(p) for p in allowed):
+        raise ValueError(f"backup key must live under one of the managed prefixes {allowed}")
 
 
 def new_backup_key() -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"{settings.s3_prefix}zbs-{stamp}.json.gz"
+    return f"{folder_prefix()}zbs-{stamp}.json.gz"
 
 
 def upload_backup(payload: bytes, key: str | None = None) -> str:
@@ -114,12 +217,16 @@ def upload_backup(payload: bytes, key: str | None = None) -> str:
     return key
 
 
-def list_backups() -> list[dict]:
+def list_backups(folder: str | None = None) -> list[dict]:
+    """List backup artifacts under one folder's prefix (newest first)."""
+    if folder is not None:
+        validate_folder(folder)
+    prefix = folder_prefix(folder)
     items: list[dict] = []
     pages = 0
-    with _translate("list"):
+    with _translate(f"list of {prefix!r}"):
         paginator = client().get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=settings.s3_bucket, Prefix=settings.s3_prefix):
+        for page in paginator.paginate(Bucket=settings.s3_bucket, Prefix=prefix):
             pages += 1
             for obj in page.get("Contents", []):
                 if not obj["Key"].endswith(".json.gz"):
@@ -134,7 +241,7 @@ def list_backups() -> list[dict]:
                     }
                 )
     items.sort(key=lambda item: item["last_modified"], reverse=True)
-    log.debug("listed %d backup(s) under %s (%d page(s))", len(items), settings.s3_prefix, pages)
+    log.debug("listed %d backup(s) under %s (%d page(s))", len(items), prefix, pages)
     return items
 
 

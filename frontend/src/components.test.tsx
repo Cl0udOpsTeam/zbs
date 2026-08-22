@@ -1,10 +1,16 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { BackupsCard } from "./components/BackupsCard";
+import { BackupsCard, clusterLabel } from "./components/BackupsCard";
 import { Header } from "./components/Header";
 import { JobsCard } from "./components/JobsCard";
 import { StatusFooter } from "./components/StatusFooter";
 import { ToastProvider, useNotify } from "./toast";
-import type { AppConfig, BackupItem, Job, StatusResponse } from "./types";
+import type {
+  AppConfig,
+  BackupItem,
+  ClusterFolder,
+  Job,
+  StatusResponse,
+} from "./types";
 
 // --------------------------------------------------------------------------
 // helpers
@@ -33,9 +39,34 @@ const baseConfig: AppConfig = {
   s3_endpoint: "AWS S3",
   s3_bucket: "bkt",
   s3_prefix: "zbs/",
+  backup_target_folder: "dev-test-my-zookeeper",
+  folders_explicitly_configured: false,
   backup_interval_seconds: 3600,
-  retention: { enabled: false, max_age_seconds: 0, interval_seconds: 3600, min_keep: 1 },
+  retention: {
+    enabled: false,
+    max_age_seconds: 0,
+    interval_seconds: 3600,
+    min_keep: 1,
+    scope_folders: ["dev-test-my-zookeeper"],
+  },
 };
+
+const clusters: ClusterFolder[] = [
+  {
+    name: "dev-test-my-zookeeper",
+    environment: "dev",
+    namespace: "test",
+    zkName: "my-zookeeper",
+    isBackupTarget: true,
+  },
+  {
+    name: "prod-payments-zk",
+    environment: "prod",
+    namespace: "payments",
+    zkName: "zk",
+    isBackupTarget: false,
+  },
+];
 
 function makeJob(overrides: Partial<Job> = {}): Job {
   return {
@@ -66,13 +97,19 @@ describe("Header", () => {
         config={{
           ...baseConfig,
           zk_auth_enabled: true,
-          retention: { enabled: true, max_age_seconds: 604800, interval_seconds: 21600, min_keep: 1 },
+          retention: {
+            enabled: true,
+            max_age_seconds: 604800,
+            interval_seconds: 21600,
+            min_keep: 1,
+            scope_folders: ["dev-test-my-zookeeper"],
+          },
         }}
       />
     );
     expect(screen.getByText(/zk:2181/)).toBeTruthy();
     expect(screen.getByText(/\(auth\)/)).toBeTruthy();
-    expect(screen.getByText(/bkt\/zbs\//)).toBeTruthy();
+    expect(screen.getByText(/bkt\/dev-test-my-zookeeper/)).toBeTruthy();
     expect(screen.getByText(/every 1h/)).toBeTruthy();
     expect(screen.getByText(/keep 1w/)).toBeTruthy();
   });
@@ -94,16 +131,20 @@ describe("BackupsCard", () => {
     const onRefresh = vi.fn(noopAsync);
     const onBackupNow = vi.fn(noopAsync);
     const onRestore = vi.fn(noopAsync);
+    const onFolderChange = vi.fn();
     render(
       <BackupsCard
         backups={props.backups ?? []}
         loadError={props.loadError ?? null}
+        clusters={"clusters" in props ? props.clusters! : []}
+        selectedFolder={props.selectedFolder ?? null}
+        onFolderChange={onFolderChange}
         onRefresh={onRefresh}
         onBackupNow={onBackupNow}
         onRestore={onRestore}
       />
     );
-    return { onRefresh, onBackupNow, onRestore };
+    return { onRefresh, onBackupNow, onRestore, onFolderChange };
   }
 
   it("lists backups with name, size, creation time and restore buttons", () => {
@@ -120,12 +161,43 @@ describe("BackupsCard", () => {
     expect(screen.getByText(/No backups yet/)).toBeTruthy();
   });
 
+  it("hides the cluster selector when discovery returned nothing", () => {
+    setup({});
+    expect(screen.queryByTitle(/Choose which cluster/)).toBeNull();
+  });
+
+  it("renders cluster options with labels and marks the backup target", () => {
+    setup({ clusters, selectedFolder: "dev-test-my-zookeeper" });
+    const options = screen.getByTitle(/Choose which cluster/).querySelectorAll("option");
+    expect(options).toHaveLength(2);
+    expect(options[0].textContent).toContain("dev/test \u00b7 my-zookeeper");
+    expect(options[0].textContent).toContain("(this cluster)");
+    expect(options[1].textContent).toContain("prod/payments \u00b7 zk");
+  });
+
+  it("falls back to the raw folder name when it does not match the convention", () => {
+    expect(
+      clusterLabel({ name: "zbs", environment: null, namespace: null, zkName: null, isBackupTarget: false })
+    ).toBe("zbs");
+  });
+
+  it("reports folder changes to the parent", () => {
+    const { onFolderChange } = setup({ clusters, selectedFolder: "dev-test-my-zookeeper" });
+    fireEvent.change(screen.getByTitle(/Choose which cluster/), {
+      target: { value: "prod-payments-zk" },
+    });
+    expect(onFolderChange).toHaveBeenCalledWith("prod-payments-zk");
+  });
+
   it("distinguishes 'no match' from 'no backups' when filtering", () => {
     const old = [backup("zbs/old.json.gz", 48 * HOUR)];
     const { container } = render(
       <BackupsCard
         backups={old}
         loadError={null}
+        clusters={clusters}
+        selectedFolder={"dev-test-my-zookeeper"}
+        onFolderChange={() => {}}
         onRefresh={noopAsync}
         onBackupNow={noopAsync}
         onRestore={noopAsync}
@@ -147,6 +219,9 @@ describe("BackupsCard", () => {
       <BackupsCard
         backups={[]}
         loadError={null}
+        clusters={clusters}
+        selectedFolder={"dev-test-my-zookeeper"}
+        onFolderChange={() => {}}
         onRefresh={noopAsync}
         onBackupNow={noopAsync}
         onRestore={noopAsync}
@@ -164,6 +239,9 @@ describe("BackupsCard", () => {
       <BackupsCard
         backups={[backup("zbs/a.json.gz", HOUR)]}
         loadError={null}
+        clusters={clusters}
+        selectedFolder={"dev-test-my-zookeeper"}
+        onFolderChange={() => {}}
         onRefresh={noopAsync}
         onBackupNow={noopAsync}
         onRestore={onRestore}
@@ -195,6 +273,9 @@ describe("BackupsCard", () => {
       <BackupsCard
         backups={[backup("zbs/a.json.gz", HOUR)]}
         loadError={null}
+        clusters={clusters}
+        selectedFolder={"dev-test-my-zookeeper"}
+        onFolderChange={() => {}}
         onRefresh={noopAsync}
         onBackupNow={noopAsync}
         onRestore={noopAsync}
@@ -212,6 +293,9 @@ describe("BackupsCard", () => {
       <BackupsCard
         backups={[backup("zbs/a.json.gz", HOUR)]}
         loadError={null}
+        clusters={clusters}
+        selectedFolder={"dev-test-my-zookeeper"}
+        onFolderChange={() => {}}
         onRefresh={noopAsync}
         onBackupNow={noopAsync}
         onRestore={onRestore}
@@ -238,6 +322,9 @@ describe("BackupsCard", () => {
       <BackupsCard
         backups={[]}
         loadError={null}
+        clusters={clusters}
+        selectedFolder={"dev-test-my-zookeeper"}
+        onFolderChange={() => {}}
         onRefresh={noopAsync}
         onBackupNow={onBackupNow}
         onRestore={noopAsync}
@@ -306,6 +393,7 @@ describe("StatusFooter", () => {
       max_age_seconds: 604800,
       interval_seconds: 21600,
       min_keep: 1,
+      scope_folders: ["dev-test-my-zookeeper"],
       last_run: { at: "2024-05-01T12:00:00+00:00", deleted: 3, scanned: 10, kept: 7 },
       next_run: null,
     },
@@ -324,7 +412,25 @@ describe("StatusFooter", () => {
     expect(container.textContent).toContain("zookeeper: ok");
     expect(container.textContent).toContain("next backup");
     expect(container.textContent).toContain("retention: keep 1w");
+    expect(container.textContent).toContain("retention scope: dev-test-my-zookeeper");
     expect(container.textContent).toContain("(3 deleted)");
+  });
+
+  it("discloses the retention scope so shared-bucket safety is visible", () => {
+    const { container } = render(
+      <StatusFooter
+        status={{
+          ...status,
+          retention: {
+            ...status.retention,
+            scope_folders: ["dev-test-my-zookeeper", "staging-demo-zk"],
+          },
+        }}
+      />
+    );
+    expect(container.textContent).toContain(
+      "retention scope: dev-test-my-zookeeper, staging-demo-zk"
+    );
   });
 
   it("warns when any dependency degrades", () => {

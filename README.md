@@ -29,6 +29,12 @@ your own auth proxy in front of the UI.
   all of its API calls are then protected by a single gate.
 - **zbs-api** (back end) – FastAPI serving only the JSON API. Its Service is internal
   (ClusterIP); browsers never talk to it directly.
+- **Multi-cluster folders** – the bucket holds one folder per ZooKeeper cluster,
+  conventionally named `ENVIRONMENT-NAMESPACE-ZOOKEEPER_NAME` (e.g.
+  `dev-test-my-zookeeper`), producing keys like
+  `dev-test-my-zookeeper/zbs-20240501T120000Z.json.gz`. Folders are auto-discovered;
+  the UI lets you browse and restore **any** cluster's backups, while new backups of
+  this instance's ZooKeeper always land in its own folder (`config.clusterFolder`).
 - **Backup** – recursively walks the znode tree from `ZBS_ZK_ROOT`, base64-encodes
   payloads, captures ACLs, and uploads a gzipped JSON snapshot
   (`<prefix>/zbs-20240501T120000Z.json.gz`).
@@ -39,7 +45,9 @@ your own auth proxy in front of the UI.
 - **Retention** – a sweeper deletes backups older than `ZBS_RETENTION_MAX_AGE`
   (e.g. one day, one week, …), running every `ZBS_RETENTION_INTERVAL`. The newest
   `ZBS_RETENTION_MIN_KEEP` backups are always kept. Retention is off unless you set a
-  max age.
+  max age. **Safety**: only this instance's own folder is ever cleaned — other
+  clusters' folders (visible via browsing) are never touched unless you explicitly
+  list them in `config.retentionFolders`.
 
 ## Repository layout
 
@@ -186,6 +194,9 @@ Either way, keep the API service internal (default) so it can't be bypassed.
 | `ZBS_S3_REGION`                | `config.s3Region`                  | ConfigMap | `us-east-1`         | AWS region                                         |
 | `ZBS_S3_PREFIX`                | `config.s3Prefix`                  | ConfigMap | `zbs/`              | Key prefix for backup objects                      |
 | `ZBS_S3_ENDPOINT`              | `config.s3Endpoint`                | ConfigMap | *(AWS S3)*          | Custom endpoint URL (MinIO, RadosGW, …)            |
+| `ZBS_S3_FOLDERS`               | `config.s3Folders`                 | ConfigMap | *(auto-discover)*   | Comma-separated folder allow-list                  |
+| `ZBS_CLUSTER_FOLDER`           | `config.clusterFolder`             | ConfigMap | *(legacy prefix)*   | Folder this instance uploads its own backups to    |
+| `ZBS_RETENTION_FOLDERS`        | `config.retentionFolders`          | ConfigMap | *(own folder only)* | Folders retention may clean up (explicit opt-in)   |
 | `ZBS_LISTEN_PORT`              | `config.listenPort`                | ConfigMap | `8080`              | HTTP listen port (API container)                   |
 | `ZBS_LOG_LEVEL`                | `config.logLevel`                  | ConfigMap | `INFO`              | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
 | `ZBS_RESTORE_MAX_DEPTH`        | *(env only)*                       | ConfigMap | `256`               | Max znode depth for dumps and restores             |
@@ -196,6 +207,22 @@ Either way, keep the API service internal (default) so it can't be bypassed.
 Duration values accept plain seconds (`"604800"`) or units — `"45s"`, `"5m"`, `"12h"`
 (twelve hours), `"1d"` (one day), `"7d"`/`"1w"` (one week), and compounds like
 `"1d12h"`.
+
+### Multi-folder examples
+
+```bash
+helm upgrade --install zbs chart/zbs -n zbs --create-namespace \
+  --set config.clusterFolder=dev-test-my-zookeeper \
+  --set config.s3Folders=dev-test-my-zookeeper,staging-demo-zk,prod-payments-zk
+```
+
+- With `clusterFolder` set, "Back up now" and the scheduler write to
+  `dev-test-my-zookeeper/…`; every other folder stays browsable/restorable.
+- With no `s3Folders`, all root folders in the bucket appear automatically —
+  legacy deployments keep working: their old `zbs/` prefix simply shows up as a
+  folder named `zbs`.
+- Retention cleans only this instance's folder by default; set
+  `config.retentionFolders` to widen it.
 
 The UI lists every backup with its creation time (local time + age, exact UTC on
 hover) and can filter them by preset ranges or a custom from/to window; retention

@@ -1,4 +1,10 @@
-import type { AppConfig, BackupItem, Job, StatusResponse } from "./types";
+import type {
+  AppConfig,
+  BackupListResponse,
+  ClusterFolder,
+  Job,
+  StatusResponse,
+} from "./types";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -25,8 +31,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export const api = {
   getConfig: () => request<AppConfig>("/api/config"),
   getStatus: () => request<StatusResponse>("/api/status"),
-  listBackups: async (): Promise<BackupItem[]> =>
-    (await request<{ backups: BackupItem[] }>("/api/backups")).backups,
+  getClusters: async (): Promise<ClusterFolder[]> =>
+    (await request<{ clusters: ClusterFolder[] }>("/api/clusters")).clusters,
+  listBackups: async (folder?: string): Promise<BackupListResponse> => {
+    const query = folder ? `?folder=${encodeURIComponent(folder)}` : "";
+    return request<BackupListResponse>(`/api/backups${query}`);
+  },
   createBackup: () => request<Job>("/api/backups", { method: "POST" }),
   restoreBackup: (key: string, wipe: boolean) =>
     request<Job>("/api/restore", { method: "POST", body: JSON.stringify({ key, wipe }) }),

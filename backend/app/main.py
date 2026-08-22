@@ -132,12 +132,15 @@ async def api_config():
         "s3_endpoint": settings.s3_endpoint or "AWS S3",
         "s3_bucket": settings.s3_bucket,
         "s3_prefix": settings.s3_prefix,
+        "backup_target_folder": settings.backup_target_folder,
+        "folders_explicitly_configured": bool(settings.s3_folders),
         "backup_interval_seconds": settings.backup_interval_seconds,
         "retention": {
             "enabled": settings.retention_max_age_seconds > 0,
             "max_age_seconds": settings.retention_max_age_seconds,
             "interval_seconds": settings.retention_interval_seconds,
             "min_keep": settings.retention_min_keep,
+            "scope_folders": settings.retention_scope(),
         },
     }
 
@@ -170,16 +173,37 @@ async def api_status():
     return status
 
 
-@app.get("/api/backups")
-async def api_list_backups():
+@app.get("/api/clusters")
+async def api_clusters():
+    """Cluster folders in the bucket (ENVIRONMENT-NAMESPACE-ZOOKEEPER_NAME)."""
     try:
-        backups = s3.list_backups()
+        return {"clusters": s3.discover_folders()}
+    except errors.ConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except errors.ZbsError as exc:
+        raise HTTPException(status_code=502, detail=f"S3 discovery failed: {exc}") from exc
+
+
+@app.get("/api/backups")
+async def api_list_backups(folder: str | None = None):
+    if folder is not None:
+        try:
+            s3.validate_folder(folder)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        managed = set(settings.s3_folders) | {settings.backup_target_folder}
+        if settings.s3_folders and folder not in managed:
+            log.warning("listing refused for unknown cluster folder %r", folder)
+            raise HTTPException(status_code=404, detail=f"unknown cluster folder {folder!r}")
+    try:
+        backups = s3.list_backups(folder)
     except errors.ConfigurationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except errors.ZbsError as exc:
         raise HTTPException(status_code=502, detail=f"S3 list failed: {exc}") from exc
-    log.debug("serving %d backups", len(backups))
-    return {"backups": backups}
+    effective = folder or settings.backup_target_folder
+    log.debug("serving %d backup(s) for folder %r", len(backups), effective)
+    return {"backups": backups, "folder": effective}
 
 
 @app.post("/api/backups", status_code=202)

@@ -7,6 +7,7 @@ are always preserved, even if expired.
 
 import logging
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 from . import s3
@@ -32,21 +33,38 @@ def select_victims(items: list[dict], now: datetime, max_age_seconds: int, min_k
 
 
 def sweep_once(trigger: str = "schedule") -> dict:
-    """One retention pass over the bucket; returns a summary for logs/UI."""
-    items = s3.list_backups()
-    now = datetime.now(timezone.utc)
-    victims = select_victims(
-        items, now, settings.retention_max_age_seconds, settings.retention_min_keep
+    """One retention pass over every scoped folder; returns a UI-friendly summary."""
+    started = time.monotonic()
+    folders = settings.retention_scope()
+    log.info(
+        "retention sweep (%s) over %d folder(s): %s",
+        trigger,
+        len(folders),
+        ", ".join(folders),
     )
-    deleted = s3.delete_backups(victims) if victims else []
+
+    totals = {"scanned": 0, "deleted": 0, "kept": 0}
+    per_folder: dict[str, dict] = {}
+    for folder in folders:
+        items = s3.list_backups(folder)
+        victims = select_victims(
+            items, datetime.now(timezone.utc), settings.retention_max_age_seconds, settings.retention_min_keep
+        )
+        deleted = s3.delete_backups(victims) if victims else []
+        per_folder[folder] = {"scanned": len(items), "deleted": len(deleted)}
+        totals["scanned"] += len(items)
+        totals["deleted"] += len(deleted)
+        totals["kept"] += len(items) - len(deleted)
+
     summary = {
+        "at": datetime.now(timezone.utc).isoformat(),
         "trigger": trigger,
-        "scanned": len(items),
-        "deleted": len(deleted),
-        "kept": len(items) - len(deleted),
+        **totals,
+        "folders": per_folder,
+        "duration_seconds": round(time.monotonic() - started, 2),
     }
-    log.info("retention sweep finished: %s", summary)
-    return {"at": now.isoformat(), **summary}
+    log.info("retention sweep finished: scanned=%(scanned)d deleted=%(deleted)d kept=%(kept)d", totals)
+    return summary
 
 
 def _loop() -> None:
@@ -99,6 +117,7 @@ def retention_snapshot() -> dict:
             "max_age_seconds": settings.retention_max_age_seconds,
             "interval_seconds": settings.retention_interval_seconds,
             "min_keep": settings.retention_min_keep,
+            "scope_folders": settings.retention_scope(),
             "last_run": dict(_last_run) if _last_run else None,
             "next_run": _next_run,
         }

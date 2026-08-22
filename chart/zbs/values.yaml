@@ -81,9 +81,29 @@ config:
 
   s3Bucket: ""
   s3Region: "us-east-1"
+  # Legacy single-folder prefix. Still used when clusterFolder is empty
+  # (keys then land under e.g. "zbs/"); ignored as a target once
+  # clusterFolder is set, but remains browsable/restoreable either way.
   s3Prefix: "zbs/"
   # Empty = real AWS S3. For MinIO e.g. "http://minio.minio.svc.cluster.local:9000".
   s3Endpoint: ""
+
+  # ---------------------------------------------------------------------------
+  # Multi-cluster folders - each folder is one ZooKeeper cluster's backup set,
+  # conventionally named ENVIRONMENT-NAMESPACE-ZOOKEEPER_NAME,
+  # e.g. "dev-test-my-zookeeper" -> dev-test-my-zookeeper/zbs-<ts>.json.gz
+  # ---------------------------------------------------------------------------
+  # Comma-separated allow-list of folders. Empty = auto-discover every folder
+  # at the bucket root.
+  s3Folders: ""
+  # Where THIS instance uploads its own backups. Empty = legacy mode: uploads
+  # go to the plain s3Prefix above. Must be listed in s3Folders when that is set.
+  clusterFolder: ""
+  # Folders retention may clean up. Empty = ONLY this instance's own folder.
+  # s3Folders only grants BROWSING of other clusters' backups - deleting them
+  # requires explicitly listing folders here. Keep this narrow when multiple
+  # deployments share one bucket.
+  retentionFolders: ""
 
 # ---------------------------------------------------------------------------
 # Credentials -> Secret (set existingSecret to manage the Secret yourself)

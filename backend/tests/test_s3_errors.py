@@ -47,17 +47,28 @@ class TestListing:
 
 
 class TestPrefixGuard:
-    def test_download_rejects_foreign_prefix(self, bucket):
-        with pytest.raises(ValueError, match="prefix"):
-            s3_module.download_backup("elsewhere/steal.json.gz")
+    def test_download_rejects_traversal_and_non_artifacts(self, bucket):
+        for bad in ("../escape.json.gz", "folder/not-a-backup.txt", ""):
+            with pytest.raises(ValueError):
+                s3_module.download_backup(bad)
 
     def test_empty_key_rejected(self, bucket):
         with pytest.raises(ValueError):
             s3_module.validate_key("")
 
-    def test_delete_rejects_foreign_prefix(self, bucket):
-        with pytest.raises(ValueError):
-            s3_module.delete_backups(["oops/x.json.gz"])
+    def test_auto_discovery_accepts_wellformed_folders(self, bucket):
+        # no allow-list configured -> any well-formed single-segment folder
+        s3_module.validate_key("dev-test-my-zookeeper/some-backup.json.gz")
+
+    def test_allowlist_rejects_unknown_folder(self, bucket):
+        s3_module.settings.s3_folders = ["dev-test-my-zookeeper"]
+        with pytest.raises(ValueError, match="managed prefixes"):
+            s3_module.download_backup("prod-other-zk/x.json.gz")
+
+    def test_delete_rejects_malformed_keys(self, bucket):
+        for bad in ("../escape.json.gz", "folder/notes.txt"):
+            with pytest.raises(ValueError):
+                s3_module.delete_backups([bad])
 
 
 class TestDeletes:

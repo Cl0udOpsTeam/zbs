@@ -8,7 +8,7 @@ export function Header({ config }: { config: AppConfig | null }) {
           "ZooKeeper",
           `${config.zk_hosts} @ ${config.zk_root}${config.zk_auth_enabled ? " (auth)" : ""}`,
         ],
-        ["S3", `${config.s3_endpoint} \u00b7 ${config.s3_bucket}/${config.s3_prefix}`],
+        ["S3", `${config.s3_endpoint} \u00b7 ${config.s3_bucket}/${config.backup_target_folder}`],
         ["Schedule", `every ${fmtInterval(config.backup_interval_seconds)}`],
         [
           "Retention",

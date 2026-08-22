@@ -19,3 +19,6 @@ data:
   ZBS_S3_REGION: {{ .Values.config.s3Region | quote }}
   ZBS_S3_PREFIX: {{ .Values.config.s3Prefix | quote }}
   ZBS_S3_ENDPOINT: {{ .Values.config.s3Endpoint | quote }}
+  ZBS_S3_FOLDERS: {{ .Values.config.s3Folders | quote }}
+  ZBS_CLUSTER_FOLDER: {{ .Values.config.clusterFolder | quote }}
+  ZBS_RETENTION_FOLDERS: {{ .Values.config.retentionFolders | quote }}

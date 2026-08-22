@@ -6,25 +6,54 @@ import { Header } from "./components/Header";
 import { JobsCard } from "./components/JobsCard";
 import { StatusFooter } from "./components/StatusFooter";
 import { ToastProvider, useNotify } from "./toast";
-import type { AppConfig, BackupItem, Job, StatusResponse } from "./types";
+import type {
+  AppConfig,
+  BackupItem,
+  ClusterFolder,
+  Job,
+  StatusResponse,
+} from "./types";
 
 function App() {
   const notify = useNotify();
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [clusters, setClusters] = useState<ClusterFolder[] | null>(null);
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [backups, setBackups] = useState<BackupItem[]>([]);
   const [backupsError, setBackupsError] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[] | null>(null);
 
+  // Pick a default cluster once both the config and the discovery result are in.
+  useEffect(() => {
+    if (selectedFolder || !clusters) return;
+    const target = config?.backup_target_folder;
+    if (target && clusters.some((c) => c.name === target)) {
+      setSelectedFolder(target);
+    } else if (clusters.length > 0) {
+      setSelectedFolder(clusters[0].name);
+    }
+  }, [clusters, config, selectedFolder]);
+
   const loadBackups = useCallback(async () => {
     try {
-      setBackups(await api.listBackups());
+      const data = await api.listBackups(selectedFolder ?? undefined);
+      setBackups(data.backups);
       setBackupsError(null);
     } catch (error) {
       setBackups([]);
       setBackupsError(errorMessage(error));
     }
-  }, []);
+  }, [selectedFolder]);
+
+  const loadClusters = useCallback(async () => {
+    try {
+      setClusters(await api.getClusters());
+    } catch (error) {
+      setClusters([]);
+      notify(`Failed to list clusters: ${errorMessage(error)}`, true);
+    }
+  }, [notify]);
 
   const refreshJobs = useCallback(async () => {
     try {
@@ -51,16 +80,21 @@ function App() {
 
   // Initial loads.
   useEffect(() => {
-    void loadBackups();
+    void loadClusters();
     void refreshJobs();
     void loadStatus();
-  }, [loadBackups, refreshJobs, loadStatus]);
+  }, [loadClusters, refreshJobs, loadStatus]);
 
-  // Polling.
+  // Reload backups when the selected cluster changes.
+  useEffect(() => {
+    void loadBackups();
+  }, [loadBackups]);
+
+  // Polling. The backup list callback identity changes with the selected
+  // folder, which also re-arms this interval after switching clusters.
+  useInterval(loadBackups, 30000);
   useInterval(refreshJobs, 2500);
   useInterval(loadStatus, 5000);
-  // Keep the backup list fresh (ages, new scheduled backups, retention deletions).
-  useInterval(loadBackups, 30000);
 
   const handleBackupNow = useCallback(async () => {
     try {
@@ -92,6 +126,9 @@ function App() {
         <BackupsCard
           backups={backups}
           loadError={backupsError}
+          clusters={clusters ?? []}
+          selectedFolder={selectedFolder}
+          onFolderChange={setSelectedFolder}
           onRefresh={loadBackups}
           onBackupNow={handleBackupNow}
           onRestore={handleRestore}

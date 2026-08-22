@@ -37,8 +37,13 @@ def _reset_s3_singleton():
 
 @pytest.fixture
 def make_settings(monkeypatch):
-    """Build a fresh Settings from an env mapping (no process env needed)."""
+    """Build a fresh Settings from an env mapping; clears all ZBS_* vars so
+    each call is independent of previous calls within the same test."""
+    import os
+
     def factory(**env) -> Settings:
+        for key in [k for k in os.environ if k.startswith("ZBS_")]:
+            monkeypatch.delenv(key, raising=False)
         for key, value in env.items():
             monkeypatch.setenv(key, str(value))
         return Settings()
@@ -210,8 +215,23 @@ class FakeS3:
         def __init__(self, outer):
             self.outer = outer
 
-        def paginate(self, Bucket=None, Prefix=""):
-            self.outer.paginate_calls.append({"Bucket": Bucket, "Prefix": Prefix})
+        def paginate(self, Bucket=None, Prefix="", Delimiter=None):
+            self.outer.paginate_calls.append(
+                {"Bucket": Bucket, "Prefix": Prefix, "Delimiter": Delimiter}
+            )
+            if Delimiter:
+                # group keys by their first path segment -> CommonPrefixes
+                prefixes = sorted(
+                    {key.split("/")[0] + "/" for key in self.outer.objects if "/" in key}
+                )
+                page_size = 2  # force multiple pages to exercise pagination
+                for start in range(0, len(prefixes), page_size):
+                    chunk = prefixes[start : start + page_size]
+                    yield {
+                        "CommonPrefixes": [{"Prefix": p} for p in chunk],
+                        "KeyCount": len(chunk),
+                    }
+                return
             matching = [
                 (key, meta)
                 for key, meta in self.outer.objects.items()

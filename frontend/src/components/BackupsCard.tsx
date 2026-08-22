@@ -1,7 +1,7 @@
 import { useMemo, useState, type ChangeEvent } from "react";
 import { applyTimeFilter } from "../filters";
 import { ageText, fmtBytes, fmtLocal, shortKey } from "../format";
-import type { BackupItem } from "../types";
+import type { BackupItem, ClusterFolder } from "../types";
 
 const PRESETS: Array<{ value: string; label: string }> = [
   { value: "all", label: "All time" },
@@ -15,9 +15,20 @@ const PRESETS: Array<{ value: string; label: string }> = [
 interface Props {
   backups: BackupItem[];
   loadError: string | null;
+  clusters: ClusterFolder[];
+  selectedFolder: string | null;
+  onFolderChange: (folder: string) => void;
   onRefresh: () => Promise<void>;
   onBackupNow: () => Promise<void>;
   onRestore: (key: string, wipe: boolean) => Promise<void>;
+}
+
+/** Human label for a cluster folder, e.g. "dev/test · my-zookeeper". */
+export function clusterLabel(folder: ClusterFolder): string {
+  if (folder.environment && folder.namespace && folder.zkName) {
+    return `${folder.environment}/${folder.namespace} \u00b7 ${folder.zkName}`;
+  }
+  return folder.name;
 }
 
 /** Props are expected to handle their own errors (App notifies); make sure a
@@ -26,7 +37,16 @@ function settled(promise: Promise<void>): void {
   void promise.catch(() => {});
 }
 
-export function BackupsCard({ backups, loadError, onRefresh, onBackupNow, onRestore }: Props) {
+export function BackupsCard({
+  backups,
+  loadError,
+  clusters,
+  selectedFolder,
+  onFolderChange,
+  onRefresh,
+  onBackupNow,
+  onRestore,
+}: Props) {
   const [preset, setPreset] = useState("all");
   const [from, setFrom] = useState("");
   const [until, setUntil] = useState("");
@@ -86,6 +106,24 @@ export function BackupsCard({ backups, loadError, onRefresh, onBackupNow, onRest
           </button>
         </div>
       </div>
+
+      {clusters.length > 0 && (
+        <div className="filters" role="group" aria-label="Cluster selection">
+          <span>Cluster:</span>
+          <select
+            value={selectedFolder ?? ""}
+            onChange={(event) => onFolderChange(event.target.value)}
+            title="Choose which cluster's backups to view"
+          >
+            {clusters.map((c) => (
+              <option key={c.name} value={c.name}>
+                {clusterLabel(c)}
+                {c.isBackupTarget ? " (this cluster)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className="filters">
         <span>Show:</span>

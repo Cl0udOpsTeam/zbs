@@ -30,6 +30,19 @@ _order: deque[str] = deque(maxlen=100)
 _busy = threading.Lock()  # held for the whole duration of a backup/restore
 
 
+def _prune_locked() -> None:
+    """Drop _jobs entries evicted from the bounded _order deque.
+
+    Caller must hold _lock. Without this, finished job dicts accumulate
+    forever (the deque forgets ids but nothing removed them from _jobs).
+    """
+    if len(_jobs) <= len(_order):
+        return
+    live = set(_order)
+    for stale_id in [job_id for job_id in _jobs if job_id not in live]:
+        del _jobs[stale_id]
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -68,6 +81,7 @@ def submit(kind: str, description: str, fn) -> dict:
     with _lock:
         _jobs[job["id"]] = job
         _order.appendleft(job["id"])
+        _prune_locked()
     log.info("job %s started: %s", job["id"], description)
 
     def runner() -> None:

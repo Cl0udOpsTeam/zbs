@@ -247,10 +247,35 @@ def list_backups(folder: str | None = None) -> list[dict]:
 
 def download_backup(key: str) -> bytes:
     validate_key(key)
+    limit = settings.restore_max_bytes
     with _translate(f"download of {key!r}"):
-        body = client().get_object(Bucket=settings.s3_bucket, Key=key)["Body"].read()
-    log.info("downloaded s3://%s/%s (%d bytes)", settings.s3_bucket, key, len(body))
-    return body
+        body = client().get_object(Bucket=settings.s3_bucket, Key=key)["Body"]
+        try:
+            if limit <= 0:
+                payload = body.read()
+            else:
+                # Stream with a hard ceiling so a huge object cannot exhaust
+                # memory. The small allowance covers gzip framing overhead
+                # (a backup at exactly the uncompressed cap may compress to
+                # slightly more than the cap).
+                ceiling = limit + (1 << 16)
+                chunks: list[bytes] = []
+                total = 0
+                while True:
+                    chunk = body.read(1 << 20)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > ceiling:
+                        raise errors.BackupValidationError(
+                            f"backup exceeds maximum size ({limit} bytes); refusing download"
+                        )
+                    chunks.append(chunk)
+                payload = b"".join(chunks)
+        finally:
+            body.close()
+    log.info("downloaded s3://%s/%s (%d bytes)", settings.s3_bucket, key, len(payload))
+    return payload
 
 
 def delete_backups(keys: list[str]) -> list[str]:

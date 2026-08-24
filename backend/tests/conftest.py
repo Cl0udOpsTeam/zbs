@@ -288,13 +288,24 @@ FAKE_NOW = None  # set below
 
 
 class _ReadableBytes:
-    """Mimics the StreamingBody interface used by download_backup."""
+    """Mimics the botocore StreamingBody interface used by download_backup,
+    including chunked reads with a size argument."""
 
     def __init__(self, payload: bytes):
         self._payload = payload
+        self._pos = 0
 
-    def read(self) -> bytes:
-        return self._payload
+    def read(self, size=-1):
+        if size is None or size < 0:
+            data = self._payload[self._pos:]
+            self._pos = len(self._payload)
+            return data
+        data = self._payload[self._pos : self._pos + size]
+        self._pos += len(data)
+        return data
+
+    def close(self) -> None:
+        pass
 
 
 from datetime import datetime as _dt  # noqa: E402

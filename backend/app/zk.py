@@ -29,6 +29,7 @@ import base64
 import binascii
 import gzip
 import hashlib
+import io
 import json
 import logging
 import posixpath
@@ -210,11 +211,24 @@ def dump_tree(zk: KazooClient, root: str) -> dict:
 # --------------------------------------------------------------------------
 
 def serialize(document: dict) -> bytes:
-    """Wrap the document in a checksummed envelope and gzip it."""
+    """Wrap the document in a checksummed envelope and gzip it.
+
+    The envelope is assembled by splicing the canonical JSON of 'document'
+    into the wrapper, so the document text exists only once in memory and
+    the embedded bytes are exactly what the checksum covers.
+    """
     payload = json.dumps(document, separators=(",", ":")).encode("utf-8")
     checksum = hashlib.sha256(payload).hexdigest()
-    envelope = {"format": BACKUP_FORMAT, "checksum": checksum, "document": document}
-    blob = gzip.compress(json.dumps(envelope, separators=(",", ":")).encode("utf-8"))
+    envelope_bytes = (
+        b'{"format":'
+        + json.dumps(BACKUP_FORMAT).encode("utf-8")
+        + b',"checksum":"'
+        + checksum.encode("ascii")
+        + b'","document":'
+        + payload
+        + b"}"
+    )
+    blob = gzip.compress(envelope_bytes)
     log.debug(
         "serialized backup: %d nodes, %d bytes compressed",
         count_nodes(document.get("tree", {})),
@@ -223,12 +237,37 @@ def serialize(document: dict) -> bytes:
     return blob
 
 
+def _gunzip_bounded(raw: bytes, max_bytes: int) -> bytes:
+    """Decompress a gzip stream with an uncompressed-size ceiling.
+
+    Raises BackupValidationError when the stream expands beyond max_bytes,
+    so a decompression bomb cannot exhaust memory. max_bytes <= 0 disables
+    the cap.
+    """
+    if max_bytes <= 0:
+        return gzip.decompress(raw)
+    out = bytearray()
+    chunk_size = 1 << 20  # 1 MiB
+    with gzip.GzipFile(fileobj=io.BytesIO(raw)) as gz:
+        while True:
+            chunk = gz.read(chunk_size)
+            if not chunk:
+                break
+            out.extend(chunk)
+            if len(out) > max_bytes:
+                raise errors.BackupValidationError(
+                    f"backup exceeds maximum uncompressed size "
+                    f"({max_bytes} bytes); refusing to restore"
+                )
+    return bytes(out)
+
+
 def deserialize(raw: bytes) -> dict:
     """Verify and unwrap a backup artifact. Raises typed corruption errors."""
     if raw[:2] != b"\x1f\x8b":
         raise errors.BackupFormatError("backup is not a gzip stream (bad magic bytes)")
     try:
-        text = gzip.decompress(raw).decode("utf-8")
+        text = _gunzip_bounded(raw, settings.restore_max_bytes).decode("utf-8")
     except (OSError, EOFError, UnicodeDecodeError) as exc:
         raise errors.BackupCorruptedError(f"backup archive is truncated or corrupt: {exc}") from exc
 

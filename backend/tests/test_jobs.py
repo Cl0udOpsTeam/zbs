@@ -200,3 +200,39 @@ class TestRunRestoreAsync:
         assert wait_for(lambda: (jobs.get_job(job["id"]) or {}).get("status") == "success")
         final = jobs.get_job(job["id"])
         assert final["result"]["key"] == "zbs/full.json.gz"
+
+
+class TestHistoryPruning:
+    def test_prune_drops_entries_evicted_from_order(self):
+        """Regression: _jobs used to grow forever once history overflowed."""
+        for i in range(150):
+            jobs._jobs[f"j{i:03d}"] = {"id": f"j{i:03d}"}
+        jobs._order.clear()
+        jobs._order.extend(f"j{i:03d}" for i in range(50, 150))  # deque keeps 100
+        with jobs._lock:
+            jobs._prune_locked()
+        assert set(jobs._jobs) == set(jobs._order)
+        assert len(jobs._jobs) == 100
+        assert jobs.get_job("j000") is None
+        assert jobs.get_job("j149") is not None
+
+    def test_prune_is_noop_below_capacity(self):
+        jobs._jobs["only"] = {"id": "only"}
+        jobs._order.clear()
+        jobs._order.append("only")
+        with jobs._lock:
+            jobs._prune_locked()
+        assert set(jobs._jobs) == {"only"}
+
+    def test_submissions_stay_bounded_end_to_end(self):
+        """103 sequential real submissions leave exactly the newest 100."""
+        for i in range(103):
+            while True:
+                try:
+                    job = jobs.submit("backup", f"job {i}", lambda: None)
+                    break
+                except RuntimeError:
+                    time.sleep(0.01)  # previous job still finishing
+            wait_for(lambda: (jobs.get_job(job["id"]) or {}).get("status") == "success")
+        assert len(jobs.list_jobs(limit=1000)) == 100
+        assert not jobs.busy()

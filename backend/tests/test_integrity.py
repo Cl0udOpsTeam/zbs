@@ -266,6 +266,62 @@ class TestValidateDocument:
 
 
 # --------------------------------------------------------------------------
+# size limits: decompression bombs must fail cleanly, never OOM
+# --------------------------------------------------------------------------
+
+class TestSizeLimits:
+    def test_decompression_bomb_rejected(self):
+        """A stream expanding beyond restore_max_bytes raises a typed error."""
+        document = build_document()
+        blob = zk_mod.serialize(document)
+        zk_mod.settings.restore_max_bytes = 16  # tiny cap; document is larger
+        with pytest.raises(errors.BackupValidationError, match="maximum uncompressed size"):
+            zk_mod.deserialize(blob)
+
+    def test_cap_disabled_still_works(self):
+        document = build_document()
+        blob = zk_mod.serialize(document)
+        zk_mod.settings.restore_max_bytes = 0  # unlimited
+        assert zk_mod.deserialize(blob) == document
+
+    def test_oversize_error_never_touches_zookeeper(self):
+        blob = zk_mod.serialize(build_document())
+        zk_mod.settings.restore_max_bytes = 16
+        with pytest.raises(errors.ZbsError):
+            zk_mod.deserialize(blob)  # raises before validate/restore can run
+
+    def test_envelope_splice_matches_reference_format(self):
+        """serialize() output is the exact dict-based envelope format."""
+        import hashlib
+
+        document = build_document()
+        blob = zk_mod.serialize(document)
+        envelope = json.loads(gzip.decompress(blob))
+        payload = json.dumps(document, separators=(",", ":")).encode()
+        assert envelope["format"] == "zbs-backup-v1"
+        assert envelope["checksum"] == hashlib.sha256(payload).hexdigest()
+        assert envelope["document"] == document
+
+    def test_old_style_envelope_still_accepted(self):
+        """Envelopes built as one big JSON dict deserialize identically."""
+        import hashlib
+
+        document = build_document()
+        payload = json.dumps(document, separators=(",", ":")).encode()
+        old_style_blob = gzip.compress(
+            json.dumps(
+                {
+                    "format": "zbs-backup-v1",
+                    "checksum": hashlib.sha256(payload).hexdigest(),
+                    "document": document,
+                },
+                separators=(",", ":"),
+            ).encode()
+        )
+        assert zk_mod.deserialize(old_style_blob) == document
+
+
+# --------------------------------------------------------------------------
 # end-to-end guarantee: corrupt restore never contacts zookeeper
 # --------------------------------------------------------------------------
 

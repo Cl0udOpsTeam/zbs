@@ -1,19 +1,28 @@
 import { fmtDuration, fmtWhen, summarizeJob } from "../format";
 import type { Job } from "../types";
 
-export function JobsCard({ jobs }: { jobs: Job[] | null }) {
+export function JobsCard({
+  jobs,
+  loadError,
+}: {
+  jobs: Job[] | null;
+  loadError?: string | null;
+}) {
   return (
     <section className="card">
       <h2 style={{ marginBottom: 12 }}>Recent jobs</h2>
+      {loadError && (
+        <p className="muted" role="alert">
+          Job list unavailable (retrying): {loadError}
+        </p>
+      )}
       <ul className="jobs">
-        {jobs === null ? (
+        {jobs === null && !loadError ? (
           <li className="muted">Loading&hellip;</li>
-        ) : jobs.length === 0 ? (
+        ) : jobs !== null && jobs.length === 0 ? (
           <li className="muted">No jobs yet.</li>
         ) : (
-          jobs.map((job) => (
-            <JobRow key={job.id} job={job} />
-          ))
+          jobs?.map((job) => <JobRow key={job.id} job={job} />)
         )}
       </ul>
     </section>

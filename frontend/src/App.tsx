@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "./api";
-import { useInterval } from "./hooks";
+import { isAbortError, useInterval } from "./hooks";
 import { BackupsCard } from "./components/BackupsCard";
 import { Header } from "./components/Header";
 import { JobsCard } from "./components/JobsCard";
@@ -23,6 +23,11 @@ function App() {
   const [backups, setBackups] = useState<BackupItem[]>([]);
   const [backupsError, setBackupsError] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[] | null>(null);
+  const [jobsError, setJobsError] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  // Guards against a slow, stale backups response overwriting a newer
+  // folder's list: every load aborts the previous one.
+  const backupsAbort = useRef<AbortController | null>(null);
 
   // Pick a default cluster once both the config and the discovery result are in.
   useEffect(() => {
@@ -36,15 +41,28 @@ function App() {
   }, [clusters, config, selectedFolder]);
 
   const loadBackups = useCallback(async () => {
+    backupsAbort.current?.abort();
+    const controller = new AbortController();
+    backupsAbort.current = controller;
     try {
-      const data = await api.listBackups(selectedFolder ?? undefined);
+      const data = await api.listBackups(
+        selectedFolder ?? undefined,
+        controller.signal
+      );
+      if (controller.signal.aborted) return;
       setBackups(data.backups);
       setBackupsError(null);
     } catch (error) {
+      // Superseded by a newer load or the component unmounted: not an error.
+      if (controller.signal.aborted || isAbortError(error)) return;
       setBackups([]);
       setBackupsError(errorMessage(error));
     }
   }, [selectedFolder]);
+
+  useEffect(() => {
+    return () => backupsAbort.current?.abort();
+  }, []);
 
   const loadClusters = useCallback(async () => {
     try {
@@ -58,16 +76,20 @@ function App() {
   const refreshJobs = useCallback(async () => {
     try {
       setJobs(await api.listJobs());
-    } catch {
-      /* transient */
+      setJobsError(null);
+    } catch (error) {
+      // Keep the last-known list visible; surface staleness instead of
+      // silently pretending everything is fine.
+      setJobsError(errorMessage(error));
     }
   }, []);
 
   const loadStatus = useCallback(async () => {
     try {
       setStatus(await api.getStatus());
-    } catch {
-      /* transient */
+      setStatusError(null);
+    } catch (error) {
+      setStatusError(errorMessage(error));
     }
   }, []);
 
@@ -133,9 +155,9 @@ function App() {
           onBackupNow={handleBackupNow}
           onRestore={handleRestore}
         />
-        <JobsCard jobs={jobs} />
+        <JobsCard jobs={jobs} loadError={jobsError} />
       </main>
-      <StatusFooter status={status} />
+      <StatusFooter status={status} statusError={statusError} />
     </>
   );
 }

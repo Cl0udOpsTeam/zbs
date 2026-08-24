@@ -59,6 +59,14 @@ spec:
             {{- toYaml .Values.api.resources | nindent 12 }}
           securityContext:
             {{- toYaml .Values.api.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            # Writable scratch space: the root filesystem is read-only, but
+            # Python (tempfile) still expects a usable /tmp.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

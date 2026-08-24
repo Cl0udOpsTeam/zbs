@@ -1,11 +1,21 @@
 import { fmtInterval, fmtWhen, humanizeSeconds } from "../format";
 import type { StatusResponse } from "../types";
 
-export function StatusFooter({ status }: { status: StatusResponse | null }) {
+export function StatusFooter({
+  status,
+  statusError,
+}: {
+  status: StatusResponse | null;
+  statusError?: string | null;
+}) {
   if (!status) {
     return (
       <footer>
-        <span className="statusline">checking status&hellip;</span>
+        <span className={`statusline ${statusError ? "warn" : ""}`}>
+          {statusError
+            ? `status unavailable (retrying): ${statusError}`
+            : "checking status\u2026"}
+        </span>
       </footer>
     );
   }
@@ -37,7 +47,10 @@ export function StatusFooter({ status }: { status: StatusResponse | null }) {
 
   return (
     <footer>
-      <span className={`statusline ${healthy ? "ok" : "warn"}`}>{parts.join(" \u00b7 ")}</span>
+      <span className={`statusline ${healthy && !statusError ? "ok" : "warn"}`}>
+        {statusError ? `status refresh failed (retrying): ${statusError} \u00b7 ` : ""}
+        {parts.join(" \u00b7 ")}
+      </span>
     </footer>
   );
 }

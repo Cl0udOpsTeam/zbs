@@ -15,6 +15,9 @@ log = logging.getLogger("zbs.config")
 _UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 _DURATION_RE = re.compile(r"(\d+)\s*([smhdw]?)")
 
+# Default cap (bytes) for the uncompressed size of a restored backup.
+_DEFAULT_RESTORE_MAX_BYTES = 1 << 30  # 1 GiB
+
 
 def parse_duration(value, default=None):
     """Parse a human-friendly duration into seconds.
@@ -119,6 +122,15 @@ class Settings:
         self.restore_max_nodes = self._clamp_int(
             _env_int("ZBS_RESTORE_MAX_NODES", 0), 0, None, "restore max nodes", 0
         )  # 0 = unlimited
+        # Cap on the *uncompressed* size of a downloaded backup (bytes).
+        # Guards against decompression bombs / runaway memory use. 0 = off.
+        self.restore_max_bytes = self._clamp_int(
+            _env_int("ZBS_RESTORE_MAX_BYTES", _DEFAULT_RESTORE_MAX_BYTES),
+            0,
+            None,
+            "restore max bytes",
+            _DEFAULT_RESTORE_MAX_BYTES,
+        )
         self.restore_acls = _env_bool("ZBS_RESTORE_ACLS", False)
 
         # S3
@@ -234,7 +246,11 @@ class Settings:
             "known folders": ", ".join(self.s3_folders) if self.s3_folders else "(auto-discovered)",
             "retention scope": ", ".join(self.retention_scope()),
             "restore acls": str(self.restore_acls),
-            "restore limits": f"max depth {self.restore_max_depth}, max nodes {'unlimited' if not self.restore_max_nodes else self.restore_max_nodes}",
+            "restore limits": (
+                f"max depth {self.restore_max_depth}, "
+                f"max nodes {'unlimited' if not self.restore_max_nodes else self.restore_max_nodes}, "
+                f"max bytes {'unlimited' if not self.restore_max_bytes else self.restore_max_bytes}"
+            ),
         }
 
 

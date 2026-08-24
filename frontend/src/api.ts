@@ -7,10 +7,11 @@ import type {
 } from "./types";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  const headers: Record<string, string> = {};
+  if (options.body != null) {
+    headers["Content-Type"] = "application/json";
+  }
+  const response = await fetch(path, { ...options, headers });
   let body: unknown = {};
   try {
     body = await response.json();
@@ -33,9 +34,12 @@ export const api = {
   getStatus: () => request<StatusResponse>("/api/status"),
   getClusters: async (): Promise<ClusterFolder[]> =>
     (await request<{ clusters: ClusterFolder[] }>("/api/clusters")).clusters,
-  listBackups: async (folder?: string): Promise<BackupListResponse> => {
+  listBackups: async (
+    folder?: string,
+    signal?: AbortSignal
+  ): Promise<BackupListResponse> => {
     const query = folder ? `?folder=${encodeURIComponent(folder)}` : "";
-    return request<BackupListResponse>(`/api/backups${query}`);
+    return request<BackupListResponse>(`/api/backups${query}`, { signal });
   },
   createBackup: () => request<Job>("/api/backups", { method: "POST" }),
   restoreBackup: (key: string, wipe: boolean) =>

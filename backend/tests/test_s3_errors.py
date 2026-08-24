@@ -71,6 +71,40 @@ class TestPrefixGuard:
                 s3_module.delete_backups([bad])
 
 
+class TestDownloadCap:
+    def test_oversized_object_rejected(self, bucket):
+        """Bodies beyond max_bytes (+64KiB gzip-framing allowance) are refused."""
+        from app.config import settings as app_settings
+
+        app_settings.restore_max_bytes = 1
+        bucket.objects["zbs/big.json.gz"] = {
+            "body": b"x" * ((1 << 16) + 2048),
+            "last_modified": datetime(2024, 1, 1, tzinfo=timezone.utc),
+        }
+        with pytest.raises(errors.BackupValidationError, match="maximum size"):
+            s3_module.download_backup("zbs/big.json.gz")
+
+    def test_object_within_cap_downloads(self, bucket):
+        from app.config import settings as app_settings
+
+        app_settings.restore_max_bytes = 1 << 20
+        bucket.objects["zbs/ok.json.gz"] = {
+            "body": b"x" * 1024,
+            "last_modified": datetime(2024, 1, 1, tzinfo=timezone.utc),
+        }
+        assert len(s3_module.download_backup("zbs/ok.json.gz")) == 1024
+
+    def test_cap_disabled_reads_everything(self, bucket):
+        from app.config import settings as app_settings
+
+        app_settings.restore_max_bytes = 0
+        bucket.objects["zbs/ok.json.gz"] = {
+            "body": b"x" * 4096,
+            "last_modified": datetime(2024, 1, 1, tzinfo=timezone.utc),
+        }
+        assert len(s3_module.download_backup("zbs/ok.json.gz")) == 4096
+
+
 class TestDeletes:
     def test_batch_over_1000_is_chunked(self, bucket):
         keys = [f"zbs/k{i}.json.gz" for i in range(2500)]

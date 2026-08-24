@@ -201,6 +201,7 @@ Either way, keep the API service internal (default) so it can't be bypassed.
 | `ZBS_LOG_LEVEL`                | `config.logLevel`                  | ConfigMap | `INFO`              | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
 | `ZBS_RESTORE_MAX_DEPTH`        | *(env only)*                       | ConfigMap | `256`               | Max znode depth for dumps and restores             |
 | `ZBS_RESTORE_MAX_NODES`        | *(env only)*                       | ConfigMap | `0` (unlimited)     | Refuse restoring documents larger than this        |
+| `ZBS_RESTORE_MAX_BYTES`        | *(env only)*                       | ConfigMap | `1073741824` (1 GiB)| Max uncompressed size of a restored backup; `0` = off |
 | `ZBS_ZK_USERNAME` / `ZBS_ZK_PASSWORD` | `secret.zkUsername` / `secret.zkPassword` | Secret | *(empty)* | Digest auth credentials (optional)          |
 | `ZBS_S3_ACCESS_KEY_ID` / `ZBS_S3_SECRET_ACCESS_KEY` | `secret.s3AccessKeyId` / `secret.s3SecretAccessKey` | Secret | *(empty)* | S3 credentials |
 
@@ -238,6 +239,8 @@ Backups are wrapped in a checksummed envelope: the SHA-256 of the embedded
 document is stored alongside it and re-verified on restore. On top of that,
 `validate_document()` deep-checks the structure (absolute normalized paths, no
 duplicates, strict base64 payloads, well-formed ACLs, depth/node rails).
+Downloads and decompression are size-capped (`ZBS_RESTORE_MAX_BYTES`), so a
+corrupt or hostile artifact fails fast instead of exhausting memory.
 
 The restore pipeline verifies everything **before** touching ZooKeeper:
 

@@ -146,8 +146,13 @@ async def api_config():
 
 
 @app.get("/api/status")
-async def api_status():
-    """Deep health check of the two dependencies, used by the UI banner."""
+def api_status():
+    """Deep health check of the two dependencies, used by the UI banner.
+
+    Deliberately a sync handler: kazoo/boto3 calls block, and FastAPI runs
+    sync handlers on its threadpool so one slow probe cannot stall the
+    event loop (and with it every other request).
+    """
     status = {
         "scheduler": scheduler_snapshot(),
         "retention": retention.retention_snapshot(),
@@ -174,8 +179,11 @@ async def api_status():
 
 
 @app.get("/api/clusters")
-async def api_clusters():
-    """Cluster folders in the bucket (ENVIRONMENT-NAMESPACE-ZOOKEEPER_NAME)."""
+def api_clusters():
+    """Cluster folders in the bucket (ENVIRONMENT-NAMESPACE-ZOOKEEPER_NAME).
+
+    Sync handler: S3 discovery blocks; keep it off the event loop.
+    """
     try:
         return {"clusters": s3.discover_folders()}
     except errors.ConfigurationError as exc:
@@ -185,7 +193,8 @@ async def api_clusters():
 
 
 @app.get("/api/backups")
-async def api_list_backups(folder: str | None = None):
+def api_list_backups(folder: str | None = None):
+    """Sync handler: S3 listing blocks; keep it off the event loop."""
     if folder is not None:
         try:
             s3.validate_folder(folder)

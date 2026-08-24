@@ -19,7 +19,7 @@ from collections import deque
 from datetime import datetime, timezone
 
 from . import s3, zk
-from . import errors
+from . import errors, metrics
 from .config import settings
 
 log = logging.getLogger("zbs.jobs")
@@ -109,19 +109,28 @@ def submit(kind: str, description: str, fn) -> dict:
         # poller observes success/error, submitting the next job must work
         # (releasing afterwards caused spurious 409s).
         _busy.release()
+        duration = time.monotonic() - started
         job["finished_at"] = _now()
         if failure is None:
             job["status"] = "success"
             job["result"] = result
+            payload_bytes = (
+                result.get("bytes") if isinstance(result, dict) else None
+            )
+            metrics.record_job(
+                kind, "success", duration,
+                int(payload_bytes) if isinstance(payload_bytes, (int, float)) else None,
+            )
             log.info(
                 "job %s succeeded in %.2fs: %s",
                 job["id"],
-                time.monotonic() - started,
+                duration,
                 result,
             )
         else:
             job["status"] = "error"
             job["error"] = failure
+            metrics.record_job(kind, "error", duration)
 
     threading.Thread(target=runner, name=f"zbs-{kind}-{job['id']}", daemon=True).start()
     return job

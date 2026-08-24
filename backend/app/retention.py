@@ -10,7 +10,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import s3
+from . import metrics, s3
 from .config import settings
 
 log = logging.getLogger("zbs.retention")
@@ -64,6 +64,7 @@ def sweep_once(trigger: str = "schedule") -> dict:
         "duration_seconds": round(time.monotonic() - started, 2),
     }
     log.info("retention sweep finished: scanned=%(scanned)d deleted=%(deleted)d kept=%(kept)d", totals)
+    metrics.record_retention(totals["deleted"])
     return summary
 
 
@@ -106,8 +107,17 @@ def start_retention() -> None:
     _thread.start()
 
 
-def stop_retention() -> None:
+def stop_retention(timeout: float = 10.0) -> None:
+    global _thread
     _stop.set()
+    thread = _thread
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=timeout)
+        if thread.is_alive():
+            log.warning(
+                "retention thread did not stop within %.1fs; abandoning it", timeout
+            )
+    _thread = None
 
 
 def retention_snapshot() -> dict:

@@ -1,0 +1,20 @@
+{{- if .Values.api.serviceMonitor.enabled }}
+# Prometheus-Operator ServiceMonitor for the API's /metrics endpoint.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "zbs.api.fullname" . }}
+  labels:
+    {{- include "zbs.labels" (dict "ctx" . "component" "api") | nindent 4 }}
+    {{- with .Values.api.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "zbs.selectorLabels" (dict "ctx" . "component" "api") | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.api.serviceMonitor.interval | default "30s" }}
+{{- end }}

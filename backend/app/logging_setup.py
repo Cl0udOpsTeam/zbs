@@ -3,19 +3,37 @@
 Log level is chosen with the ZBS_LOG_LEVEL environment variable
 (DEBUG, INFO, WARNING, ERROR, CRITICAL - default INFO). An invalid value
 falls back to INFO with a warning instead of refusing to start.
+
+Every record carries the current HTTP request id (or "-" outside of a
+request) so log lines can be correlated per client call.
 """
 
+import contextvars
 import logging
 import os
 import sys
 
-LOG_FORMAT = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
+LOG_FORMAT = "%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s: %(message)s"
 VALID_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 DEFAULT_LEVEL = "INFO"
 
 # Libraries that are very chatty at DEBUG; quiet them unless the operator
 # explicitly asked for DEBUG.
 _NOISY_LOGGERS = ("botocore", "urllib3", "kazoo")
+
+# Set by the API middleware for every request; "-" elsewhere (background
+# threads such as scheduler/retention never run inside a request).
+request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "request_id", default="-"
+)
+
+
+class RequestIdFilter(logging.Filter):
+    """Injects the contextual request id into every LogRecord."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = request_id_var.get()
+        return True
 
 
 def resolve_level(name: str | None) -> tuple[str, int]:
@@ -43,6 +61,7 @@ def setup_logging(level_name: str | None = None) -> str:
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
     handler = logging.StreamHandler(sys.stderr)
+    handler.addFilter(RequestIdFilter())
     handler.setFormatter(logging.Formatter(LOG_FORMAT))
     logger.addHandler(handler)
     logger.propagate = False

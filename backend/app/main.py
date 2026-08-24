@@ -6,16 +6,18 @@ Keep this Service internal - put your auth proxy in front of the UI instead.
 """
 
 import logging
+import re
 import time
+import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from . import errors, jobs, retention, s3, zk
+from . import errors, jobs, metrics, retention, s3, zk
 from .config import settings
-from .logging_setup import log_banner, setup_logging
+from .logging_setup import log_banner, request_id_var, setup_logging
 from .scheduler import scheduler_snapshot, start_scheduler, stop_scheduler
 
 # Logging must be configured before any module logs anything meaningful.
@@ -44,8 +46,19 @@ app = FastAPI(
 )
 
 
+# Paths whose traffic is probe/metrics scraping, not human activity: logged
+# at DEBUG so INFO access logs stay readable.
+_QUIET_PATHS = re.compile(r"^/(healthz|readyz|metrics)$")
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+
+
 @app.middleware("http")
 async def _observability(request: Request, call_next):
+    # Correlate every log line of this request; honor an inbound header
+    # (from an upstream proxy) when it is sane, otherwise mint one.
+    inbound = request.headers.get("x-request-id", "")
+    request_id = inbound if _REQUEST_ID_RE.fullmatch(inbound) else uuid.uuid4().hex[:16]
+    token = request_id_var.set(request_id)
     started = time.perf_counter()
     try:
         response = await call_next(request)
@@ -56,15 +69,25 @@ async def _observability(request: Request, call_next):
             request.url.path,
             exc_info=True,
         )
+        request_id_var.reset(token)
         raise
     duration_ms = (time.perf_counter() - started) * 1000
-    log.debug(
+    response.headers["X-Request-ID"] = request_id
+
+    route = request.scope.get("route")
+    path_template = getattr(route, "path", None) or "unmatched"
+    metrics.record_http(request.method, path_template, response.status_code)
+
+    level = logging.DEBUG if _QUIET_PATHS.match(request.url.path) else logging.INFO
+    log.log(
+        level,
         "%s %s -> %d (%.1f ms)",
         request.method,
         request.url.path,
         response.status_code,
         duration_ms,
     )
+    request_id_var.reset(token)
     return response
 
 
@@ -104,6 +127,15 @@ class RestoreRequest(BaseModel):
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+def metrics_endpoint() -> Response:
+    """Prometheus scrape target (text exposition format 0.0.4)."""
+    metrics.set_engine_busy(jobs.busy())
+    return PlainTextResponse(
+        metrics.render(), media_type="text/plain; version=0.0.4; charset=utf-8"
+    )
 
 
 @app.get("/readyz")

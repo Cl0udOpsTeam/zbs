@@ -1,5 +1,7 @@
 """Retention: victim selection boundaries and sweep behavior."""
 
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -115,3 +117,43 @@ class TestSweepOnce:
         # sweep_once itself doesn't check the flag (the loop won't start);
         # guard the invariant explicitly:
         assert retention.retention_snapshot()["enabled"] is False
+
+
+class TestShutdown:
+    def test_start_stop_joins_thread(self, monkeypatch):
+        monkeypatch.setattr(retention.settings, "retention_max_age_seconds", 86400)
+        monkeypatch.setattr(retention.settings, "retention_interval_seconds", 3600)
+        monkeypatch.setattr(
+            retention,
+            "sweep_once",
+            lambda trigger="schedule": {"at": "x", "trigger": trigger},
+        )
+        retention.start_retention()
+        assert retention._thread is not None and retention._thread.is_alive()
+        began = datetime.now(timezone.utc)
+        retention.stop_retention(timeout=5)
+        elapsed = (datetime.now(timezone.utc) - began).total_seconds()
+        assert retention._thread is None
+        assert elapsed < 3, f"stop_retention took {elapsed:.2f}s to join"
+
+    def test_stop_abandons_thread_that_wont_die(self, monkeypatch):
+        """A sweep stuck in S3 must not hang shutdown: join times out, the
+        thread is abandoned loudly, and the caller moves on."""
+        stuck = threading.Event()
+        released = threading.Event()
+
+        def blocked_sweep(trigger="schedule"):
+            stuck.set()
+            released.wait(timeout=10)
+
+        monkeypatch.setattr(retention.settings, "retention_max_age_seconds", 86400)
+        # First sweep happens after one full interval -> keep it tiny.
+        monkeypatch.setattr(retention.settings, "retention_interval_seconds", 1)
+        monkeypatch.setattr(retention, "sweep_once", blocked_sweep)
+
+        retention.start_retention()
+        assert stuck.wait(timeout=5), "loop never entered the sweep"
+        retention.stop_retention(timeout=0.1)  # too short on purpose
+        assert retention._thread is None  # abandoned
+        released.set()  # let the daemon thread finish for cleanup
+        time.sleep(0.05)

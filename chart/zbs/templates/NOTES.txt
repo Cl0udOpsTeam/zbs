@@ -25,8 +25,20 @@ Expose the UI:
 
 {{- if .Values.route.enabled }}
   Route: {{ include "zbs.ui.fullname" . }}{{ if .Values.route.host }} -> {{ .Values.route.host }}{{ end }}
+{{- else if .Values.ingress.enabled }}
+  Ingress: {{ include "zbs.ui.fullname" . }}{{ range .Values.ingress.hosts }} -> {{ .host }}{{ end }}
 {{- else }}
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "zbs.ui.fullname" . }} 8080:{{ .Values.service.ui.port }}
 
 then open http://localhost:8080
 {{- end }}
+
+Observability:
+{{- if .Values.api.serviceMonitor.enabled }}
+  Prometheus scrapes svc/{{ include "zbs.api.fullname" . }}/metrics via ServiceMonitor.
+{{- else }}
+  Metrics: port-forward the API service and scrape /metrics (Prometheus text format).
+{{- end }}
+
+Verify the install:
+  helm test {{ .Release.Name }}

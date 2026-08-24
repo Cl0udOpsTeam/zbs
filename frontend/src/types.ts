@@ -57,6 +57,8 @@ export interface SchedulerSnapshot {
   interval_seconds: number;
   last_run: string | null;
   next_run: string | null;
+  /** "success" | "error" | "timeout" | "stopped" — outcome of the last tick. */
+  last_status?: string | null;
 }
 
 export interface StatusResponse {

@@ -43,18 +43,26 @@ spec:
                 name: {{ include "zbs.fullname" . }}
             - secretRef:
                 name: {{ include "zbs.secretName" . }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 2
           readinessProbe:
             httpGet:
               path: /readyz
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 2
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
           securityContext:

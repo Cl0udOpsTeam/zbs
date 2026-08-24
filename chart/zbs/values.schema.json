@@ -1,0 +1,231 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "zbs",
+  "type": "object",
+  "properties": {
+    "imagePullSecrets": { "type": "array" },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "annotations": { "type": "object" },
+        "name": { "type": "string" }
+      }
+    },
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" },
+    "service": {
+      "type": "object",
+      "properties": {
+        "api": { "$ref": "#/$defs/serviceSpec" },
+        "ui": { "$ref": "#/$defs/serviceSpec" }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "annotations": { "type": "object" },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["host", "paths"],
+            "properties": {
+              "host": { "type": "string", "minLength": 1 },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["path"],
+                  "properties": {
+                    "path": { "type": "string" },
+                    "pathType": {
+                      "enum": ["Prefix", "Exact", "ImplementationSpecific"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tls": { "type": "array" }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string", "minLength": 1 },
+            "pullPolicy": { "$ref": "#/$defs/pullPolicy" }
+          }
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "host": { "type": "string" },
+        "path": { "type": "string" },
+        "annotations": { "type": "object" },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "termination": {
+              "enum": ["edge", "passthrough", "reencrypt"]
+            },
+            "insecureEdgeTerminationPolicy": {
+              "enum": ["None", "Allow", "Redirect"]
+            },
+            "certificate": { "type": "string" },
+            "key": { "type": "string" },
+            "caCertificate": { "type": "string" },
+            "destinationCACertificate": { "type": "string" }
+          }
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "listenPort": { "$ref": "#/$defs/portString" },
+        "logLevel": {
+          "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        },
+        "zkHosts": { "type": "string" },
+        "zkRoot": { "type": "string", "pattern": "^/" },
+        "zkSessionTimeout": { "type": "string" },
+        "backupIntervalSeconds": { "type": "string" },
+        "retentionMaxAge": { "type": "string" },
+        "retentionInterval": { "type": "string" },
+        "retentionMinKeep": { "type": "string" },
+        "restoreAcls": {
+          "enum": ["true", "false"]
+        },
+        "s3Bucket": { "type": "string" },
+        "s3Region": { "type": "string" },
+        "s3Prefix": { "type": "string" },
+        "s3Endpoint": { "type": "string" },
+        "s3Folders": { "type": "string" },
+        "clusterFolder": { "type": "string" },
+        "retentionFolders": { "type": "string" }
+      }
+    },
+    "secret": {
+      "type": "object",
+      "properties": {
+        "existingSecret": { "type": "string" },
+        "zkUsername": { "type": "string" },
+        "zkPassword": { "type": "string" },
+        "s3AccessKeyId": { "type": "string" },
+        "s3SecretAccessKey": { "type": "string" }
+      }
+    },
+    "api": {
+      "type": "object",
+      "properties": {
+        "image": { "$ref": "#/$defs/image" },
+        "serviceMonitor": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "interval": { "type": "string" },
+            "labels": { "type": "object" }
+          }
+        },
+        "podAnnotations": { "type": "object" },
+        "podSecurityContext": { "type": "object" },
+        "containerSecurityContext": { "type": "object" },
+        "resources": { "$ref": "#/$defs/resources" }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "properties": {
+        "image": { "$ref": "#/$defs/image" },
+        "replicaCount": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "autoscaling": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "minReplicas": { "type": "integer", "minimum": 1 },
+            "maxReplicas": { "type": "integer", "minimum": 1 },
+            "targetCPUUtilizationPercentage": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        },
+        "podDisruptionBudget": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" } }
+        },
+        "containerPort": { "$ref": "#/$defs/portString" },
+        "targetPort": { "$ref": "#/$defs/portString" },
+        "apiUpstream": { "type": "string" },
+        "sidecars": { "type": "array" },
+        "extraVolumes": { "type": "array" },
+        "podAnnotations": { "type": "object" },
+        "podSecurityContext": { "type": "object" },
+        "containerSecurityContext": { "type": "object" },
+        "resources": { "$ref": "#/$defs/resources" }
+      }
+    }
+  },
+  "$defs": {
+    "image": {
+      "type": "object",
+      "required": ["repository"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "pullPolicy": { "$ref": "#/$defs/pullPolicy" },
+        "tag": { "type": "string" }
+      }
+    },
+    "serviceSpec": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer", "ExternalName"]
+        },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "portString": {
+      "type": "string",
+      "pattern": "^[0-9]{1,5}$"
+    },
+    "pullPolicy": {
+      "enum": ["Always", "IfNotPresent", "Never"]
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "requests": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": ["string", "number"] },
+            "memory": { "type": ["string", "number"] }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": ["string", "number"] },
+            "memory": { "type": ["string", "number"] }
+          }
+        }
+      }
+    }
+  }
+}

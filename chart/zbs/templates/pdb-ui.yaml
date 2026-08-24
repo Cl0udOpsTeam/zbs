@@ -1,0 +1,15 @@
+{{- if and .Values.ui.podDisruptionBudget.enabled (gt (int .Values.ui.replicaCount) 1) }}
+# Only meaningful once the UI runs more than one replica; with a single
+# replica a PDB would block every voluntary drain for no benefit.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "zbs.ui.fullname" . }}
+  labels:
+    {{- include "zbs.labels" (dict "ctx" . "component" "ui") | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "zbs.selectorLabels" (dict "ctx" . "component" "ui") | nindent 6 }}
+{{- end }}

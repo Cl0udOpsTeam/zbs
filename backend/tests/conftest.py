@@ -29,6 +29,15 @@ def _restore_settings():
 
 
 @pytest.fixture(autouse=True)
+def _reset_metrics():
+    from app import metrics as metrics_module
+
+    metrics_module.reset_for_tests()
+    yield
+    metrics_module.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _reset_s3_singleton():
     s3_module.reset_client()
     yield

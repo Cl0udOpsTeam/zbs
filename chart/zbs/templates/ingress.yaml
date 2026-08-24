@@ -1,0 +1,46 @@
+{{- if .Values.ingress.enabled }}
+# Vanilla-Kubernetes exposure path for the UI (the chart otherwise only
+# offers an OpenShift Route). Put your auth proxy annotations here or gate
+# the Ingress with whatever ingress-level auth your cluster provides.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "zbs.ui.fullname" . }}
+  labels:
+    {{- include "zbs.labels" (dict "ctx" . "component" "ui") | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- range .Values.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- with .secretName }}
+      secretName: {{ . }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ default "Prefix" .pathType }}
+            backend:
+              service:
+                name: {{ include "zbs.ui.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.ui.port }}
+          {{- end }}
+    {{- end }}
+{{- end }}

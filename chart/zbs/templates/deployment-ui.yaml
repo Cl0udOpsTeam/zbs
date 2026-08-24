@@ -7,7 +7,9 @@ metadata:
 spec:
   # The UI is stateless and safe to scale; this is also the pod where an
   # auth proxy sidecar (ui.sidecars) would live.
+  {{- if not .Values.ui.autoscaling.enabled }}
   replicas: {{ .Values.ui.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "zbs.selectorLabels" (dict "ctx" . "component" "ui") | nindent 6 }}
@@ -40,18 +42,26 @@ spec:
               value: {{ .Values.ui.containerPort | quote }}
             - name: ZBS_API_UPSTREAM
               value: {{ include "zbs.ui.apiUpstream" . | quote }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
             initialDelaySeconds: 3
             periodSeconds: 10
+            timeoutSeconds: 2
           readinessProbe:
             httpGet:
               path: /healthz
               port: http
             initialDelaySeconds: 3
             periodSeconds: 10
+            timeoutSeconds: 2
           resources:
             {{- toYaml .Values.ui.resources | nindent 12 }}
           securityContext:

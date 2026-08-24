@@ -1,0 +1,39 @@
+{{- /*
+Post-install/upgrade smoke test: hit the API's readiness endpoint and the
+UI's health endpoint through their Services.
+
+  helm test <release>
+*/}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "zbs.fullname" . }}-test-connection"
+  labels:
+    {{- include "zbs.labels" (dict "ctx" . "component" "test") | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+    runAsNonRoot: true
+  containers:
+    - name: smoke
+      image: "{{ .Values.tests.image.repository }}:{{ .Values.tests.image.tag }}"
+      imagePullPolicy: {{ .Values.tests.image.pullPolicy }}
+      command:
+        - /bin/sh
+        - -c
+        - |
+          curl -fsS --max-time 5 "http://{{ include "zbs.api.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.config.listenPort }}/readyz"
+          echo ""
+          curl -fsS --max-time 5 "http://{{ include "zbs.ui.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.ui.port }}/healthz"
+          echo "smoke test passed"
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL

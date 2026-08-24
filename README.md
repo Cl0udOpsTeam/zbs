@@ -42,6 +42,9 @@ your own auth proxy in front of the UI.
   created, existing ones are overwritten. An optional *wipe* deletes the current
   subtree first. `/zookeeper` is never touched.
 - **Scheduler** – takes a backup every `ZBS_BACKUP_INTERVAL_SECONDS` (`0` disables).
+  The cadence is fixed: ticks fire every interval of wall-clock time regardless of
+  how long the previous backup ran, and an overrun job triggers an immediate
+  make-up tick.
 - **Retention** – a sweeper deletes backups older than `ZBS_RETENTION_MAX_AGE`
   (e.g. one day, one week, …), running every `ZBS_RETENTION_INTERVAL`. The newest
   `ZBS_RETENTION_MIN_KEEP` backups are always kept. Retention is off unless you set a
@@ -258,12 +261,35 @@ Every component logs through the `zbs.*` logger tree with timestamps; level is
 set once via `ZBS_LOG_LEVEL` (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`;
 invalid values fall back to `INFO` with a warning). Highlights:
 
-- `DEBUG` — per-node dump/restore traces, S3 keys, scheduler ticks, HTTP access log
+- Every line carries the current HTTP request id (`[a1b2c3…]`) for correlation;
+  an inbound `X-Request-ID` header is honored, otherwise one is minted and echoed
+  back on the response.
+- HTTP access logging runs at **INFO**; probe/metrics traffic
+  (`/healthz`, `/readyz`, `/metrics`) stays at DEBUG to keep logs readable.
+- `DEBUG` — per-node dump/restore traces, S3 keys, scheduler ticks
 - `INFO` — job lifecycle with durations, sweep summaries, startup banner (secrets masked)
 - `WARNING` — vanished nodes during dumps, invalid-but-recovered config values, partial S3 deletes
 - `ERROR` / `CRITICAL` — failed jobs vs. unexpected crashes (with tracebacks)
 
 Example: `helm upgrade ... --set config.logLevel=DEBUG`.
+
+## Metrics
+
+The API exposes Prometheus counters/gauges at `/metrics` (text exposition format,
+no extra dependencies):
+
+| Metric | Labels | Meaning |
+| --- | --- | --- |
+| `zbs_jobs_total` | kind, result | Backup/restore jobs by terminal status |
+| `zbs_last_job_duration_seconds` | kind | Duration of the most recent job |
+| `zbs_backup_payload_bytes_total` | – | Compressed bytes uploaded by backups |
+| `zbs_retention_deleted_total` | – | Backups deleted by retention sweeps |
+| `zbs_scheduler_timeouts_total` | – | Scheduled jobs whose wait deadline expired |
+| `zbs_http_requests_total` | method, path, status | API requests (route templates only) |
+| `zbs_engine_busy` | – | 1 while a backup/restore is running |
+
+Scrape it directly, or set `api.serviceMonitor.enabled=true` when the
+prometheus-operator CRDs are installed.
 
 ## Testing
 
@@ -297,4 +323,9 @@ base64-encoded data, ACLs and an ephemeral flag. On restore:
 - **No RBAC needed** – ZBS talks to ZooKeeper and S3, never to the Kubernetes API.
 - **Probes** – API: `/healthz` (liveness) and `/readyz` (mandatory config present);
   deep dependency checks are exposed at `/api/status`. UI: nginx `/healthz`.
+  Both deployments add a `startupProbe` so slow container starts are not killed.
 - **Job history** resets on API pod restart; backups in S3 do not.
+- **Resilience primitives** (chart): UI `PodDisruptionBudget` renders when
+  `ui.replicaCount > 1`; optional `ui.autoscaling` HPA; optional vanilla-K8s
+  `ingress.*` alongside the OpenShift Route. Validate any install with
+  `helm test <release>` (smoke-tests `/readyz` and `/healthz`).

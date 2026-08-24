@@ -2,8 +2,9 @@
 
 > ZooKeeper Backup System — web-based backup & restore for Apache ZooKeeper ensembles,
 > deployed to Kubernetes/OpenShift via Helm. This document summarizes the project
-> architecture, a full audit performed in August 2026, and the critical fixes applied
-> during that audit. For usage/deployment instructions see `README.md`.
+> architecture, a full audit performed in August 2026, and two completed remediation
+> rounds: **critical fixes** (§3) and the **ops-maturity track** (§3b). For
+> usage/deployment instructions see `README.md`.
 
 ---
 
@@ -176,6 +177,82 @@ chart:      helm lint chart/zbs          -> 0 failed
 
 ---
 
+## 3b. Ops-maturity round (August 2026, second change set)
+
+The full "Ops maturity" track was implemented after the critical fixes above.
+
+### Observability
+- **New `backend/app/metrics.py`** — dependency-free Prometheus text-exposition
+  registry (format 0.0.4; lock-guarded counters/gauges, deterministic rendering,
+  escaped labels). Exposed at `GET /metrics` (outside `/api`).
+  Metrics: `zbs_jobs_total{kind,result}`, `zbs_last_job_duration_seconds{kind}`,
+  `zbs_backup_payload_bytes_total`, `zbs_retention_deleted_total`,
+  `zbs_scheduler_timeouts_total`, `zbs_http_requests_total{method,path,status}`
+  (route templates only — no cardinality blowup), `zbs_engine_busy`.
+- Wired in `jobs.submit()` runner, `retention.sweep_once()`, scheduler timeout path,
+  and the HTTP middleware.
+- **Request IDs**: contextvar + `RequestIdFilter`; every log line now carries
+  `[request-id]`; the middleware honors a sane inbound `X-Request-ID`, mints one
+  otherwise, and echoes it on responses.
+- **Access log at INFO** for real traffic; `/healthz|/readyz|/metrics` stay DEBUG.
+
+### Scheduler correctness (`scheduler.py`)
+- **Fixed cadence** — ticks fire every interval of wall-clock time regardless of job
+  duration; an overrun slot triggers an immediate make-up tick (previously the
+  interval restarted *after* each job finished → drift). `next_run` derives from the
+  same clock. This is a deliberate behavior change, documented in README.
+- **`_wait_job` is honest** — checks the stop event between polls, returns
+  `success | error | timeout | stopped`; timeout logs a warning and bumps
+  `zbs_scheduler_timeouts_total`. Snapshot gained `last_status`.
+- **Cooperative shutdown** — `stop_scheduler()` / `stop_retention()` join their
+  thread (10 s default) and log loudly if abandoning it.
+
+### Chart resilience & exposure (all gated templates render nothing when off)
+- `startupProbe` (2 s × 30) + `timeoutSeconds: 2` on liveness/readiness, both pods.
+- UI **PDB** (minAvailable 1), rendered only when `ui.podDisruptionBudget.enabled`
+  AND `replicaCount > 1`.
+- UI **HPA** (autoscaling/v2, CPU utilization); when enabled the Deployment's static
+  `replicas:` field is omitted.
+- Vanilla-K8s **Ingress** (className/hosts/TLS/annotations → UI Service).
+- API **ServiceMonitor** for Prometheus-Operator scraping `/metrics`.
+- `helm test` smoke-test hook pod (digest-pinned curl image) hitting API `/readyz`
+  and UI `/healthz` through their Services. NOTES.txt reflects active paths.
+
+### Supply chain & polish
+- `requirements.txt` / `requirements-dev.txt`: exact pins matching the tested env
+  (`fastapi==0.141.1`, `uvicorn[standard]==0.52.4`, `kazoo==2.11.0`, `boto3==1.43.77`,
+  `pytest==9.1.1`, `httpx==0.28.1`). Hash-pinning remains future work (needs network
+  at install time).
+- All base images digest-pinned via fresh `docker manifest inspect`:
+  `python:3.12-slim@sha256:8764…f8b4`,
+  `node:22-alpine@sha256:7678…858c`,
+  `nginxinc/nginx-unprivileged:1.27-alpine@sha256:28d9…b48`.
+- New **`values.schema.json`** validates types/enums/bounds (verified: rejects
+  `ui.replicaCount=0`).
+
+### Tests added (round 2)
+
+| Suite | Coverage |
+|---|---|
+| `backend/tests/test_metrics.py` (10 tests) | exposition format, label escaping/sorting, domain helpers, HTTP status bucketing, parallel-increment safety |
+| `backend/tests/test_scheduler.py` (5 tests) | disabled mode, snapshot success fields, make-up tick after overrun (proves fixed cadence vs drift), wait-timeout metric, stop-aware `_wait_job`, prompt stop/join mid-wait |
+| `backend/tests/test_retention.py::TestShutdown` (2 tests) | start/stop joins promptly; abandoned-thread path when sweep blocks past join timeout |
+
+### Verification results (round 2)
+
+```
+backend:    python -m pytest tests       -> 211 passed (+18)
+frontend:   npm test                     -> 81 passed; tsc + vite build clean
+chart:      helm lint                    -> 0 failed
+            helm template defaults       -> startupProbes/timeouts/helm-test Pod render
+            helm template all-gates-on   -> + PDB, HPA (no static replicas), Ingress,
+                                            ServiceMonitor; schema rejects bad values
+live smoke: TestClient GET /healthz,/api/config,/metrics -> request id echoed in
+            logs and headers; zbs_http_requests_total/zbs_engine_busy present
+```
+
+---
+
 ## 4. Known limitations after these fixes (by design / deferred)
 
 - **Single API replica is still mandatory** — job state is in-memory and the busy
@@ -185,6 +262,8 @@ chart:      helm lint chart/zbs          -> 0 failed
 - **Integrity ≠ authenticity** — checksums protect against corruption, not tampering;
   legacy pre-checksum envelopes are still accepted (with a warning).
 - Job history resets on pod restart (artifacts in S3 are durable).
+- Metrics are process-local (consistent with the single-replica design); no
+  histogram/quantile series yet.
 
 ## 5. Recommended next steps (prioritized backlog)
 
@@ -198,13 +277,12 @@ chart:      helm lint chart/zbs          -> 0 failed
    - Optional bearer-token auth on mutating endpoints (`POST /api/backups`, `/api/restore`).
    - Escape `:` in ZK digest credentials (`zk.py` f-string); reconsider default
      OPEN_ACL_UNSAFE restore behavior.
-2. **Ops maturity:** Prometheus `/metrics` + request IDs; startupProbe + probe tuning;
-   HPA/PDB for UI (replicas ≥ 2); optional Ingress for vanilla K8s; pin deps
-   (lock file/hashes) and base image digests; `helm test` hook + `values.schema.json`.
-3. **Reliability:** make restore resumable/journaled; conditional S3 puts
-   (`IfNoneMatch`) against second-granularity key collisions; scheduler deadline
-   telemetry; retry-with-backoff in frontend polls.
-4. **Code health:** ruff+mypy (backend), ESLint typescript-eslint+react-hooks and
-   Prettier (frontend); dedicated scheduler tests; replace hand-rolled polling with
-   TanStack Query if scope grows; accessible modal replacing `window.confirm`;
-   aria-live toasts; list virtualization for very long bucket histories.
+2. **Reliability:** make restore resumable/journaled; conditional S3 puts
+   (`IfNoneMatch`) against second-granularity key collisions; retry-with-backoff
+   in frontend polls; cache/TTL for `/api/status` dependency probes.
+3. **Code health:** ruff+mypy (backend), ESLint typescript-eslint+react-hooks and
+   Prettier (frontend); replace hand-rolled polling with TanStack Query if scope
+   grows; accessible modal replacing `window.confirm`; aria-live toasts; list
+   virtualization for very long bucket histories.
+4. **Supply chain follow-up:** pip hash-pinning / lock file; periodic digest refresh
+   policy for the pinned base images.

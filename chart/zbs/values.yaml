@@ -26,6 +26,32 @@ service:
     type: ClusterIP
     port: 80
 
+# ---------------------------------------------------------------------------
+# Vanilla-Kubernetes Ingress for the UI (alternative to the OpenShift Route).
+# Gate it with whatever auth your ingress provides - the UI is the public
+# entry point and must be protected.
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+# Image used by the `helm test` smoke-test pod (hits /readyz and /healthz).
+tests:
+  image:
+    repository: curlimages/curl
+    tag: "8.14.1@sha256:cf21c4317a3b0629605fa43efdc9d64d0419913931ce9d8c258bf1a98a4472e2"
+    pullPolicy: IfNotPresent
+
 route:
   # OpenShift Route to the UI service - the public entry point (and the
   # natural place for router-level authentication annotations).
@@ -125,6 +151,14 @@ api:
     # Overrides the image tag, whose default is "v{{ .Chart.AppVersion }}".
     tag: ""
 
+  # Prometheus-Operator ServiceMonitor scraping the API's /metrics endpoint.
+  # Requires the prometheus-operator CRDs; without them use scrape annotations
+  # or plain /metrics via your own discovery.
+  serviceMonitor:
+    enabled: false
+    interval: "30s"
+    labels: {}
+
   podAnnotations: {}
 
   podSecurityContext:
@@ -159,6 +193,20 @@ ui:
 
   # Stateless - safe to scale out.
   replicaCount: 1
+
+  # Horizontal pod autoscaling for the stateless UI. When enabled, the
+  # Deployment's static `replicas` field is omitted and autoscaling governs
+  # the count (replicaCount is ignored).
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+
+  # Voluntary-disruption protection; only rendered when replicaCount > 1
+  # (with one replica a PDB would block every drain for no benefit).
+  podDisruptionBudget:
+    enabled: true
 
   # Port nginx listens on inside the container.
   containerPort: "8080"

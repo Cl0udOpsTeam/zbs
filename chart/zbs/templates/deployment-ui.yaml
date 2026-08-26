@@ -69,11 +69,14 @@ spec:
           volumeMounts:
             # Writable scratch space: the root filesystem is read-only, but
             # nginx-unprivileged still writes temp/cache data under /tmp and
-            # /var/cache/nginx.
+            # /var/cache/nginx. The docker-entrypoint envsubst script also
+            # renders templates into /etc/nginx/conf.d at startup.
             - name: tmp
               mountPath: /tmp
             - name: nginx-cache
               mountPath: /var/cache/nginx
+            - name: nginx-conf-d
+              mountPath: /etc/nginx/conf.d
         {{- with .Values.ui.sidecars }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -81,6 +84,8 @@ spec:
         - name: tmp
           emptyDir: {}
         - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-conf-d
           emptyDir: {}
         {{- with .Values.ui.extraVolumes }}
         {{- toYaml . | nindent 8 }}

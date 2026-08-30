@@ -49,10 +49,37 @@ def client():
     if _client is None:
         if not settings.s3_bucket:
             raise errors.ConfigurationError("ZBS_S3_BUCKET is not configured")
+        verify = settings.s3_verify_ssl
+        ca_bundle = settings.s3_ca_bundle
+        if ca_bundle and not verify:
+            log.warning(
+                "ZBS_S3_CA_BUNDLE=%r is set but TLS verification is disabled; ignoring bundle",
+                ca_bundle,
+            )
+            ca_bundle = None
+        if ca_bundle:
+            import os
+
+            if not os.path.isfile(ca_bundle):
+                raise errors.ConfigurationError(
+                    f"ZBS_S3_CA_BUNDLE={ca_bundle!r} does not point to a readable file"
+                )
+            # botocore parses the file as PEM regardless of extension, but a
+            # totally non-cert-looking name usually means a config mistake.
+            ext = os.path.splitext(ca_bundle)[1].lower()
+            if ext and ext not in (".pem", ".crt", ".cer", ".key", ".bundle", ".ca"):
+                log.warning(
+                    "ZBS_S3_CA_BUNDLE=%r has unusual extension %r; botocore will "
+                    "try to parse it as PEM anyway",
+                    ca_bundle,
+                    ext,
+                )
         log.debug(
-            "creating s3 client (endpoint=%s, region=%s)",
+            "creating s3 client (endpoint=%s, region=%s, verify_ssl=%s, ca_bundle=%s)",
             settings.s3_endpoint or "AWS default",
             settings.s3_region,
+            verify,
+            ca_bundle or "(system trust store)",
         )
         session = boto3.session.Session(
             aws_access_key_id=settings.s3_access_key_id,
@@ -62,6 +89,7 @@ def client():
         _client = session.client(
             "s3",
             endpoint_url=settings.s3_endpoint,
+            verify=ca_bundle if ca_bundle else verify,
             config=BotoConfig(
                 retries={"max_attempts": 5, "mode": "standard"},
                 connect_timeout=10,

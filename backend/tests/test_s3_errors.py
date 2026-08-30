@@ -1,5 +1,6 @@
 """S3 layer: listing, prefix guards, batched deletes, typed error translation."""
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import botocore.exceptions
@@ -177,3 +178,178 @@ class TestErrorTranslation:
         bucket.fail_on["put_object"] = Marker("pre-translated")
         with pytest.raises(Marker):
             s3_module.upload_backup(b"data")
+
+
+class TestTLSConfiguration:
+    def test_default_verifies_with_system_trust(self, tmp_path):
+        """No CA bundle, verify enabled (default) -> botocore receives verify=True."""
+        from unittest.mock import patch
+
+        s3_module.reset_client()
+        s3_module.settings.s3_bucket = "test-bucket"
+        s3_module.settings.s3_verify_ssl = True
+        s3_module.settings.s3_ca_bundle = None
+
+        captured = {}
+
+        class FakeSession:
+            def client(self, service_name, endpoint_url=None, verify=None, config=None):
+                captured["service_name"] = service_name
+                captured["endpoint_url"] = endpoint_url
+                captured["verify"] = verify
+                captured["config"] = config
+                return object()
+
+        with patch.object(s3_module.boto3.session, "Session", return_value=FakeSession()):
+            s3_module.client()
+        assert captured["verify"] is True
+
+    def test_ca_bundle_passed_through(self, tmp_path):
+        """A readable PEM file is forwarded to botocore as the verify value."""
+        bundle = tmp_path / "ca.pem"
+        bundle.write_text("-----BEGIN CERTIFICATE-----\n...fake...\n-----END CERTIFICATE-----\n")
+
+        from unittest.mock import patch
+
+        s3_module.reset_client()
+        s3_module.settings.s3_bucket = "test-bucket"
+        s3_module.settings.s3_verify_ssl = True
+        s3_module.settings.s3_ca_bundle = str(bundle)
+
+        captured = {}
+
+        class FakeSession:
+            def client(self, service_name, endpoint_url=None, verify=None, config=None):
+                captured["verify"] = verify
+                return object()
+
+        with patch.object(s3_module.boto3.session, "Session", return_value=FakeSession()):
+            s3_module.client()
+        assert captured["verify"] == str(bundle)
+
+    def test_skip_verify_disables_tls_check(self):
+        """ZBS_S3_VERIFY_SSL=false -> botocore receives verify=False."""
+        from unittest.mock import patch
+
+        s3_module.reset_client()
+        s3_module.settings.s3_bucket = "test-bucket"
+        s3_module.settings.s3_verify_ssl = False
+        s3_module.settings.s3_ca_bundle = None
+
+        captured = {}
+
+        class FakeSession:
+            def client(self, service_name, endpoint_url=None, verify=None, config=None):
+                captured["verify"] = verify
+                return object()
+
+        with patch.object(s3_module.boto3.session, "Session", return_value=FakeSession()):
+            s3_module.client()
+        assert captured["verify"] is False
+
+    def test_ca_bundle_ignored_when_verify_disabled(self, tmp_path):
+        """A CA bundle set alongside verify=false is dropped, with a warning."""
+        bundle = tmp_path / "ca.pem"
+        bundle.write_text("-----BEGIN CERTIFICATE-----\n...fake...\n-----END CERTIFICATE-----\n")
+
+        from unittest.mock import patch
+
+        s3_module.reset_client()
+        s3_module.settings.s3_bucket = "test-bucket"
+        s3_module.settings.s3_verify_ssl = False
+        s3_module.settings.s3_ca_bundle = str(bundle)
+
+        captured = {}
+
+        class FakeSession:
+            def client(self, service_name, endpoint_url=None, verify=None, config=None):
+                captured["verify"] = verify
+                return object()
+
+        with patch.object(s3_module.boto3.session, "Session", return_value=FakeSession()):
+            s3_module.client()
+        assert captured["verify"] is False
+
+    def test_missing_ca_bundle_file_raises(self, tmp_path):
+        """A path that does not resolve to a file is a configuration error."""
+        from unittest.mock import patch
+
+        s3_module.reset_client()
+        s3_module.settings.s3_bucket = "test-bucket"
+        s3_module.settings.s3_verify_ssl = True
+        s3_module.settings.s3_ca_bundle = str(tmp_path / "does-not-exist.pem")
+
+        with patch.object(s3_module.boto3.session, "Session", return_value=object()):
+            with pytest.raises(errors.ConfigurationError, match="does not point to a readable file"):
+                s3_module.client()
+
+    @pytest.mark.parametrize("ext", [".pem", ".crt", ".cer", ".key"])
+    def test_known_certificate_extension_accepted_without_warning(self, tmp_path, ext):
+        """Standard cert extensions are accepted silently."""
+        from unittest.mock import patch
+
+        bundle = tmp_path / f"ca{ext}"
+        bundle.write_text("-----BEGIN CERTIFICATE-----\n...fake...\n-----END CERTIFICATE-----\n")
+
+        records = []
+        capture = logging.Handler()
+        capture.setLevel(logging.WARNING)
+        capture.emit = lambda record: records.append(record)
+
+        s3_logger = logging.getLogger("zbs.s3")
+        s3_logger.addHandler(capture)
+        try:
+            s3_module.reset_client()
+            s3_module.settings.s3_bucket = "test-bucket"
+            s3_module.settings.s3_verify_ssl = True
+            s3_module.settings.s3_ca_bundle = str(bundle)
+
+            captured = {}
+
+            class FakeSession:
+                def client(self, service_name, endpoint_url=None, verify=None, config=None):
+                    captured["verify"] = verify
+                    return object()
+
+            with patch.object(s3_module.boto3.session, "Session", return_value=FakeSession()):
+                s3_module.client()
+        finally:
+            s3_logger.removeHandler(capture)
+
+        assert captured["verify"] == str(bundle)
+        assert not [r for r in records if "unusual extension" in r.getMessage()]
+
+    def test_unknown_extension_warns_but_still_loads(self, tmp_path):
+        """A non-standard extension is accepted with a warning."""
+        from unittest.mock import patch
+
+        bundle = tmp_path / "custom.bundle"
+        bundle.write_text("-----BEGIN CERTIFICATE-----\n...fake...\n-----END CERTIFICATE-----\n")
+
+        records = []
+        capture = logging.Handler()
+        capture.setLevel(logging.WARNING)
+        capture.emit = lambda record: records.append(record)
+
+        s3_logger = logging.getLogger("zbs.s3")
+        s3_logger.addHandler(capture)
+        try:
+            s3_module.reset_client()
+            s3_module.settings.s3_bucket = "test-bucket"
+            s3_module.settings.s3_verify_ssl = True
+            s3_module.settings.s3_ca_bundle = str(bundle)
+
+            captured = {}
+
+            class FakeSession:
+                def client(self, service_name, endpoint_url=None, verify=None, config=None):
+                    captured["verify"] = verify
+                    return object()
+
+            with patch.object(s3_module.boto3.session, "Session", return_value=FakeSession()):
+                s3_module.client()
+        finally:
+            s3_logger.removeHandler(capture)
+
+        assert captured["verify"] == str(bundle)
+        assert any("unusual extension" in r.getMessage() for r in records)

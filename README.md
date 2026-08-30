@@ -197,6 +197,9 @@ Either way, keep the API service internal (default) so it can't be bypassed.
 | `ZBS_S3_REGION`                | `config.s3Region`                  | ConfigMap | `us-east-1`         | AWS region                                         |
 | `ZBS_S3_PREFIX`                | `config.s3Prefix`                  | ConfigMap | `zbs/`              | Key prefix for backup objects                      |
 | `ZBS_S3_ENDPOINT`              | `config.s3Endpoint`                | ConfigMap | *(AWS S3)*          | Custom endpoint URL (MinIO, RadosGW, …)            |
+| `ZBS_S3_VERIFY_SSL`            | `config.s3VerifySSL`               | ConfigMap | `true`              | Verify the S3 endpoint's TLS certificate (`true`/`false`) |
+| `ZBS_S3_CA_BUNDLE`             | `config.s3CaBundle` (via volume)   | ConfigMap+volume | *(system trust)* | CA bundle (PEM or DER/base64 content) mounted at `/etc/ssl/zbs/<s3CaBundleFileName>` and trusted by the S3 client |
+| `config.s3CaBundleFileName`    | *(chart only)*                     | —         | `ca-bundle.pem`    | On-disk filename for the mounted CA bundle (basename, one of `.pem`/`.crt`/`.cer`/`.key`) |
 | `ZBS_S3_FOLDERS`               | `config.s3Folders`                 | ConfigMap | *(auto-discover)*   | Comma-separated folder allow-list                  |
 | `ZBS_CLUSTER_FOLDER`           | `config.clusterFolder`             | ConfigMap | *(legacy prefix)*   | Folder this instance uploads its own backups to    |
 | `ZBS_RETENTION_FOLDERS`        | `config.retentionFolders`          | ConfigMap | *(own folder only)* | Folders retention may clean up (explicit opt-in)   |

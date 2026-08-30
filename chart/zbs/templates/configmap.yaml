@@ -22,3 +22,9 @@ data:
   ZBS_S3_FOLDERS: {{ .Values.config.s3Folders | quote }}
   ZBS_CLUSTER_FOLDER: {{ .Values.config.clusterFolder | quote }}
   ZBS_RETENTION_FOLDERS: {{ .Values.config.retentionFolders | quote }}
+  ZBS_S3_VERIFY_SSL: {{ .Values.config.s3VerifySSL | quote }}
+  {{- if .Values.config.s3CaBundle }}
+  # Mounted into the API pod at /etc/ssl/zbs/<s3CaBundleFileName> and pointed
+  # at via ZBS_S3_CA_BUNDLE (deployment-api.yaml).
+  {{ .Values.config.s3CaBundleFileName }}: {{ .Values.config.s3CaBundle | quote }}
+  {{- end }}

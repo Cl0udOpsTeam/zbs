@@ -132,3 +132,36 @@ class TestSettings:
         assert "AKIASECRET" not in blob
         assert "supersecret" not in blob
         assert "hunter2" not in blob
+
+    def test_s3_tls_defaults(self, make_settings):
+        s = make_settings()
+        assert s.s3_verify_ssl is True
+        assert s.s3_ca_bundle is None
+
+    @pytest.mark.parametrize("raw", ["false", "0", "no", "off"])
+    def test_s3_verify_ssl_can_be_disabled(self, make_settings, raw):
+        s = make_settings(ZBS_S3_VERIFY_SSL=raw)
+        assert s.s3_verify_ssl is False
+
+    @pytest.mark.parametrize("raw", ["true", "1", "yes", "on"])
+    def test_s3_verify_ssl_defaults_to_enabled(self, make_settings, raw):
+        s = make_settings(ZBS_S3_VERIFY_SSL=raw)
+        assert s.s3_verify_ssl is True
+
+    def test_s3_ca_bundle_parsed(self, make_settings):
+        s = make_settings(ZBS_S3_CA_BUNDLE="/etc/ssl/zbs/ca-bundle.pem")
+        assert s.s3_ca_bundle == "/etc/ssl/zbs/ca-bundle.pem"
+
+    def test_s3_ca_bundle_empty_is_none(self, make_settings):
+        s = make_settings(ZBS_S3_CA_BUNDLE="   ")
+        assert s.s3_ca_bundle is None
+
+    def test_describe_includes_tls_state(self, make_settings):
+        s = make_settings(
+            ZBS_S3_VERIFY_SSL="false",
+            ZBS_S3_CA_BUNDLE="/etc/ssl/zbs/ca-bundle.pem",
+        )
+        blob = repr(s.describe())
+        assert "s3 tls verify" in blob
+        assert "off" in blob
+        assert "/etc/ssl/zbs/ca-bundle.pem" in blob

@@ -38,6 +38,13 @@ spec:
             - name: http
               containerPort: {{ .Values.config.listenPort }}
               protocol: TCP
+          env:
+            {{- if .Values.config.s3CaBundle }}
+            # Point the botocore S3 client at the CA bundle the chart mounts
+            # below. Without this, verify=True uses only the system trust store.
+            - name: ZBS_S3_CA_BUNDLE
+              value: /etc/ssl/zbs/{{ .Values.config.s3CaBundleFileName }}
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "zbs.fullname" . }}
@@ -72,9 +79,25 @@ spec:
             # Python (tempfile) still expects a usable /tmp.
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.config.s3CaBundle }}
+            # Custom CA bundle for verifying the S3 endpoint's TLS cert. The
+            # ConfigMap key s3CaBundleFileName holds the certificate data.
+            - name: s3-ca-bundle
+              mountPath: /etc/ssl/zbs/{{ .Values.config.s3CaBundleFileName }}
+              subPath: {{ .Values.config.s3CaBundleFileName }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if .Values.config.s3CaBundle }}
+        - name: s3-ca-bundle
+          configMap:
+            name: {{ include "zbs.fullname" . }}
+            items:
+              - key: {{ .Values.config.s3CaBundleFileName }}
+                path: {{ .Values.config.s3CaBundleFileName }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

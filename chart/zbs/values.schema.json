@@ -115,6 +115,14 @@
         "s3Region": { "type": "string" },
         "s3Prefix": { "type": "string" },
         "s3Endpoint": { "type": "string" },
+        "s3VerifySSL": {
+          "enum": ["true", "false"]
+        },
+        "s3CaBundle": { "type": "string" },
+        "s3CaBundleFileName": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+\\.(pem|crt|cer|key)$"
+        },
         "s3Folders": { "type": "string" },
         "clusterFolder": { "type": "string" },
         "retentionFolders": { "type": "string" }

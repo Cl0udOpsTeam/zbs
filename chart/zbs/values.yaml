@@ -114,6 +114,22 @@ config:
   # Empty = real AWS S3. For MinIO e.g. "http://minio.minio.svc.cluster.local:9000".
   s3Endpoint: ""
 
+  # S3 TLS verification.
+  # - s3VerifySSL="false" disables certificate verification entirely (DANGER:
+  #   traffic becomes vulnerable to MITM; only use for short-lived test endpoints).
+  # - s3CaBundle is a PEM (or single-file DER/base64-encoded) bundle of trusted
+  #   CAs to verify the endpoint's certificate against. Empty = botocore default
+  #   trust store. The chart writes this into the ConfigMap under the key
+  #   named in s3CaBundleFileName and mounts it into the API pod at
+  #   /etc/ssl/zbs/<s3CaBundleFileName>, then sets ZBS_S3_CA_BUNDLE at that path.
+  # - s3CaBundleFileName picks the on-disk filename for the bundle. botocore
+  #   reads PEM contents regardless of extension, so .crt / .cer / .pem all
+  #   work; pick whatever your cert pipeline produces. Must be a basename
+  #   (no slashes, no '..') and have one of: .pem .crt .cer .key.
+  s3VerifySSL: "true"
+  s3CaBundle: ""
+  s3CaBundleFileName: "ca-bundle.pem"
+
   # ---------------------------------------------------------------------------
   # Multi-cluster folders - each folder is one ZooKeeper cluster's backup set,
   # conventionally named ENVIRONMENT-NAMESPACE-ZOOKEEPER_NAME,

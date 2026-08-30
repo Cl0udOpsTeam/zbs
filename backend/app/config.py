@@ -168,6 +168,15 @@ class Settings:
         self.s3_access_key_id = os.environ.get("ZBS_S3_ACCESS_KEY_ID") or None
         self.s3_secret_access_key = os.environ.get("ZBS_S3_SECRET_ACCESS_KEY") or None
 
+        # S3 TLS verification. Disable only for self-signed/private-CA endpoints
+        # you actually trust; skipping verification leaves traffic open to MITM.
+        self.s3_verify_ssl = _env_bool("ZBS_S3_VERIFY_SSL", True)
+        # Path on disk to a PEM CA bundle to trust when verifying the S3
+        # endpoint's TLS certificate. Empty = botocore default trust store.
+        # When the chart mounts a CA bundle from the ConfigMap it sets this to
+        # /etc/ssl/zbs/ca-bundle.pem.
+        self.s3_ca_bundle = _env("ZBS_S3_CA_BUNDLE", "") or None
+
     @staticmethod
     def _clamp_int(value: int, minimum: int | None, maximum: int | None, label: str, fallback: int) -> int:
         if minimum is not None and value < minimum:
@@ -242,6 +251,8 @@ class Settings:
             "s3 endpoint": self.s3_endpoint or "AWS S3",
             "s3 bucket": self.s3_bucket or "(not configured)",
             "s3 prefix": self.s3_prefix,
+            "s3 tls verify": "on" if self.s3_verify_ssl else "off",
+            "s3 ca bundle": self.s3_ca_bundle or "(system trust store)",
             "backup target folder": self.backup_target_folder,
             "known folders": ", ".join(self.s3_folders) if self.s3_folders else "(auto-discovered)",
             "retention scope": ", ".join(self.retention_scope()),

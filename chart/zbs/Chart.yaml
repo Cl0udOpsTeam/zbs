@@ -4,8 +4,8 @@ description: >-
   ZooKeeper Backup System - scheduled znode-tree backups to S3 with a web UI
   for point-and-click restores.
 type: application
-version: 0.6.0
-appVersion: "0.3.0"
+version: 0.7.0
+appVersion: "0.7.0"
 keywords:
   - zookeeper
   - backup
